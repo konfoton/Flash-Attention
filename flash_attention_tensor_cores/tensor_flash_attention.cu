@@ -103,14 +103,22 @@ int main(){
     // hyperparameters
     const int number_of_warps = 4;
     const int tile = 16 * 4;
-    const int shared_mem_needed
+    int shared_mem_needed = D * tile * sizeof(__half); // queries
+    shared_mem_needed += D * tile * sizeof(__half); // keys + values idepdendently
+    shared_mem_needed += D * tile * sizeof(__half); // output
+    shared_mem_needed += tile * tile * sizeof(__half); // tile
+    shared_mem_needed += 64 * 2 * sizeof(float); // running max sum per tile
+
+
+
+
 
 
     int number_of_blocks = B * H * (L / tile);
     int threads_per_block = number_of_warps * 32;
 
     dim3 gridDim(L/ tile, B, H);
-    flash_attention_kernel<<<gridDim, threads_per_block>>>(Q, K, V, O, B, H, L, D, tile);
+    flash_attention_kernel<<<gridDim, threads_per_block, shared_mem_needed>>>(Q, K, V, O, B, H, L, D, tile);
 
     return 0;
 }
