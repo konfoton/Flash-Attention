@@ -47,20 +47,70 @@ __global__ void flash_attention_kernel(
     int K_offset = batch_id * H * L * D + head_id * L * D + tile_id * tile * D;
     int V_offset = batch_id * H * L * D + head_id * L * D + tile_id * tile * D;
     int O_offset = batch_id * H * L * D + head_id * L * D + tile_id * tile * D;
+    int O_offset_shmem = D * tile;;
+    int K_V_offset_shmem = D * tile + O_offset_shmem;
+    int tile_offset_shmem = D * tile + O_offset_shmem;
+    int running_max_offset_shmem =  tile * tile + tile_offset_shmem;
 
-    /*
-    loading Q into shared memory (64, 128)
-    cache line is 128 bytes
-    8 threads per warp load 16 floats (128 bytes)
-    therefore each warp handle (16, 128) in 8 loads (4, 64)
-    */
+
+
+    int B_r = tile;
+    int T_r = L / 64;
+    wmma::fragment<wmma::matrix_a, 16, 16, 16, __half, wmma::row_major> a_frag;
+    wmma::fragment<wmma::matrix_b, 16, 16, 16, __half, wmma::col_major> b_frag;
+    wmma::fragment<wmma::accumulator, 16, 16, 16, __half> c_frag;
+    nvcuda::wmma::fill_fragment(c_frag, 0.0);
+
+
+
+
+    // loading Q into shared memory
     copy_block_GSM<GM2SM_async<__half>, __half>(
         ( __half*)&Q[Q_offset],
         ( __half*)&shared_mem[0],
         lane_id
     );
     cp_async_commit();
-    cp_async_wait<0>();
+
+
+    // loading O into shared memory
+    copy_block_GSM<GM2SM_async<__half>, __half>(
+        ( __half*)&O[O_offset],
+        ( __half*)&shared_mem[O_offset_shmem],
+        lane_id
+    );
+    cp_async_commit();
+
+    for(int i = 0; i < T_r; i++){
+        // loading K into shared memory
+        copy_block_GSM<GM2SM_async<__half>, __half>(
+            ( __half*)&K[K_offset + i * tile * D],
+            ( __half*)&shared_mem[K_V_offset_shmem],
+            lane_id
+        );
+        cp_async_commit();
+        cp_async_wait<0>();
+        for(int j = 0; j < 64; j += 16) {
+            for (int k = 0; k < 128; k += 16) {
+            
+                int col = k;
+                int row = j;
+
+                // Load the inputs
+                nvcuda::wmma::load_matrix_sync(a_frag, &shared_mem[lane_id * 16 * D + col], 128);
+                nvcuda::wmma::load_matrix_sync(b_frag, &shared_mem[row * D + col], 128);
+
+                // Perform the matrix multiplication
+                nvcuda::wmma::mma_sync(c_frag, a_frag, b_frag, c_frag);
+            }
+            nvcuda::wmma::store_matrix_sync(&shared_mem[tile_offset_shmem + lane_id * 16 * D + j], c_frag, 128, nvcuda::wmma::mem_row_major);
+        }
+}
+
+    
+
+
+
 
 
 
@@ -77,10 +127,6 @@ __global__ void flash_attention_kernel(
 
 
 
-    wmma::fragment<wmma::matrix_a, WMMA_M, WMMA_N, WMMA_K, half, wmma::col_major> a_frag;
-    wmma::fragment<wmma::matrix_b, WMMA_M, WMMA_N, WMMA_K, half, wmma::col_major> b_frag;
-    wmma::fragment<wmma::accumulator, WMMA_M, WMMA_N, WMMA_K, float> acc_frag;
-    wmma::fragment<wmma::accumulator, WMMA_M, WMMA_N, WMMA_K, float> c_frag;
 
 
 
@@ -104,10 +150,10 @@ int main(){
     const int number_of_warps = 4;
     const int tile = 16 * 4;
     int shared_mem_needed = D * tile * sizeof(__half); // queries
-    shared_mem_needed += D * tile * sizeof(__half); // keys + values idepdendently
     shared_mem_needed += D * tile * sizeof(__half); // output
+    shared_mem_needed += D * tile * sizeof(__half); // keys + values idepdendently
     shared_mem_needed += tile * tile * sizeof(__half); // tile
-    shared_mem_needed += 64 * 2 * sizeof(float); // running max sum per tile
+    shared_mem_needed += 64 * 2 * sizeof(__half); // running max sum per tile
 
 
 
