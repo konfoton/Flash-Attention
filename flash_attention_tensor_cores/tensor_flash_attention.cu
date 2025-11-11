@@ -2,6 +2,7 @@
 #include <cuda.h>
 #include <cuda_fp16.h>
 #include <mma.h>
+#include "tensor_flash_attention.h"
 using namespace nvcuda::wmma;
 
 
@@ -84,6 +85,15 @@ __global__ void flash_attention_kernel(
         lane_id
     );
     cp_async_commit();
+
+    // setting running max to -INF and sum to zero
+    if(lane_id < 16){
+            shared_mem[running_max_offset_shmem + warp_id * 16 * 2 + lane_id * 2 + 0] = -65504.0f; // -INF for __half
+            shared_mem[running_max_offset_shmem + warp_id * 16 * 2 + lane_id * 2 + 1] = 0.0f;
+    }
+
+    __syncwarp();
+
 
     for(int i = 0; i < T_r; i++){
         // loading K into shared memory
@@ -174,7 +184,7 @@ __global__ void flash_attention_kernel(
         for (int j = 0; j < 128; j += 16) {
             load_matrix_sync(c_frag, &shared_mem[O_offset_shmem + warp_id * 16 * D + j], 128, nvcuda::wmma::mem_row_major);
             for(int k = 0; k < 64; k += 16) {
-                
+
                 int col_a = k;
                 int col_b = j;
 
@@ -189,8 +199,8 @@ __global__ void flash_attention_kernel(
         }
 
         
-        
-}
+    }
+
     // scale output by running sum and 1/sqrt(D)
     for(int j = 0; j < 16; j++){
         __half running_sum = shared_mem[running_max_offset_shmem + warp_id * 16 * 2 + j * 2 + 1];
@@ -213,41 +223,4 @@ __global__ void flash_attention_kernel(
     cp_async_commit();
     cp_async_wait<0>();
         
-
-
-
-
-}
-
-
-int main(){
-    // test parameters
-    const int B = 10;
-    const int H = 8;
-    const int L = 64 * 10;
-    const int D = 128;
-
-
-
-    // hyperparameters
-    const int number_of_warps = 4;
-    const int tile = 16 * 4;
-    int shared_mem_needed = D * tile * sizeof(__half); // queries
-    shared_mem_needed += D * tile * sizeof(__half); // output
-    shared_mem_needed += D * tile * sizeof(__half); // keys + values idepdendently
-    shared_mem_needed += tile * tile * sizeof(__half); // tile
-    shared_mem_needed += 64 * 2 * sizeof(__half); // running max sum per tile
-
-
-
-
-
-
-    int number_of_blocks = B * H * (L / tile);
-    int threads_per_block = number_of_warps * 32;
-
-    dim3 gridDim(L/ tile, B, H);
-    flash_attention_kernel<<<gridDim, threads_per_block, shared_mem_needed>>>(Q, K, V, O, B, H, L, D, tile);
-
-    return 0;
 }
