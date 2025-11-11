@@ -1,8 +1,9 @@
 # Flash Attention (CUDA) vs Normal Attention
 
-This project implements and benchmarks two GPU kernels for scaled dot-product attention:
+This project implements and benchmarks three GPU kernels for scaled dot-product attention:
 - Normal (naive) attention: straightforward
-- Flash-style attention: tiled, blockwise softmax that reduces memory traffic
+- Flash-style attention: tiled, blockwise softmax that reduces memory traffic (CUDA CORES)
+- Flash-style attention: tiled, blockwise softmax that reduces memory traffic (TENSOR CORES)
 
 Both GPU paths use half-precision (__half) inputs/outputs with float accumulation for stability. A PyTorch notebook is included to compare against PyTorch’s scaled_dot_product_attention backends.
 
