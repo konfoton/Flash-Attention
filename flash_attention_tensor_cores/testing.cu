@@ -7,6 +7,79 @@
 #include "tensor_flash_attention.cuh"
 
 
+#ifndef CUDA_CHECK
+#define CUDA_CHECK(call)                                                                 \
+    do {                                                                                 \
+        cudaError_t _cuda_check_err = (call);                                            \
+        if (_cuda_check_err != cudaSuccess) {                                            \
+            fprintf(stderr, "CUDA error %s at %s:%d -> %s\n",                         \
+                    #call, __FILE__, __LINE__, cudaGetErrorString(_cuda_check_err));     \
+            std::exit(EXIT_FAILURE);                                                     \
+        }                                                                                \
+    } while (0)
+#endif
+
+#ifndef CUDA_CHECK_LAST_KERNEL
+#define CUDA_CHECK_LAST_KERNEL(msg)                                                      \
+    do {                                                                                 \
+        cudaError_t _e1 = cudaGetLastError();                                            \
+        if (_e1 != cudaSuccess) {                                                        \
+            fprintf(stderr, "Kernel error after %s at %s:%d -> %s\n",                  \
+                    msg, __FILE__, __LINE__, cudaGetErrorString(_e1));                   \
+            std::exit(EXIT_FAILURE);                                                     \
+        }                                                                                \
+        CUDA_CHECK(cudaDeviceSynchronize());                                             \
+    } while (0)
+#endif
+
+
+
+// CPU implementation of attention for correctness testing
+#include <vector>
+#include <cmath>
+#include <algorithm>
+static void attention_cpu(
+	const std::vector<float>& Q,
+	const std::vector<float>& K,
+	const std::vector<float>& V,
+	std::vector<float>& O,
+	int B, int H, int L, int D,
+	bool causal
+) {
+	auto idx = [H, L, D](int b, int h, int i, int d) -> size_t {
+		return (((size_t)b * H + h) * L + i) * D + d;
+	};
+	float scale = 1.0f / std::sqrt((float)D);
+
+	for (int b = 0; b < B; ++b) {
+		for (int h = 0; h < H; ++h) {
+			for (int i = 0; i < L; ++i) {
+				std::vector<float> scores(L, -1e30f);
+				for (int j = 0; j < L; ++j) {
+					if (causal && j > i) continue;
+					float dot = 0.0f;
+					for (int d = 0; d < D; ++d) {
+						dot += Q[idx(b, h, i, d)] * K[idx(b, h, j, d)];
+					}
+					scores[j] = dot * scale;
+				}
+				float m = -1e30f;
+				for (int j = 0; j < L; ++j) m = std::max(m, scores[j]);
+				float denom = 0.0f;
+				for (int j = 0; j < L; ++j) denom += std::exp(scores[j] - m);
+				if (denom <= 0) denom = 1.0f;
+				for (int d = 0; d < D; ++d) {
+					float outd = 0.0f;
+					for (int j = 0; j < L; ++j) {
+						float p = std::exp(scores[j] - m) / denom;
+						outd += p * V[idx(b, h, j, d)];
+					}
+					O[idx(b, h, i, d)] = outd;
+				}
+			}
+		}
+	}
+}
 
 int main(){
     // test parameters
@@ -15,15 +88,33 @@ int main(){
     const int L = 64 * 10;
     const int D = 128;
 
+
+
+    
     // allocate memory
     __half *Q, *K, *V, *O;
-    cudaMalloc(&Q, B * H * L * D* sizeof(__half));
-    cudaMalloc(&K, B * H * L * D* sizeof(__half));
-    cudaMalloc(&V, B * H * L * D* sizeof(__half));
-    cudaMalloc(&O, B * H * L * D* sizeof(__half));
+    CUDA_CHECK(cudaMalloc(&Q, B * H * L * D* sizeof(__half)));
+    CUDA_CHECK(cudaMalloc(&K, B * H * L * D* sizeof(__half)));
+    CUDA_CHECK(cudaMalloc(&V, B * H * L * D* sizeof(__half)));
+    CUDA_CHECK(cudaMalloc(&O, B * H * L * D* sizeof(__half)));
 
 
+    // host memory for correctness testing
+    std::vector<__half> Q_cpu(B * H * L * D);
+    std::vector<__half> K_cpu(B * H * L * D);
+    std::vector<__half> V_cpu(B * H * L * D);
+    std::vector<__half> O_cpu(B * H * L * D, 0.0f);
 
+    for(size_t i = 0; i < Q_cpu.size(); i++){
+        __half val = static_cast<__half>(rand()) / RAND_MAX;
+        Q_cpu[i] = val;
+        K_cpu[i] = val;
+        V_cpu[i] = val;
+    }
+
+    cudaMemcpy(Q, Q_cpu.data(), Q_cpu.size() * sizeof(__half), cudaMemcpyHostToDevice);
+    cudaMemcpy(K, K_cpu.data(), K_cpu.size() * sizeof(__half), cudaMemcpyHostToDevice);
+    cudaMemcpy(V, V_cpu.data(), V_cpu.size() * sizeof(__half), cudaMemcpyHostToDevice); 
 
 
     // hyperparameters
@@ -44,6 +135,35 @@ int main(){
     int threads_per_block = number_of_warps * 32;
 
     dim3 gridDim(L/ tile, B, H);
+
+
     flash_attention_kernel<<<gridDim, threads_per_block, shared_mem_needed>>>(Q, K, V, O, B, H, L, D, tile);
+    CUDA_CHECK_LAST_KERNEL("flash_attention_kernel");
+
+
+    // copy back results
+    std::vector<__half> O_gpu(B * H * L * D);
+    CUDA_CHECK(cudaMemcpy(O_gpu.data(), O, O_cpu.size() * sizeof(__half), cudaMemcpyDeviceToHost));
+
+
+    // compute reference results on CPU
+    attention_cpu(
+        Q_cpu,
+        K_cpu,
+        V_cpu,
+        O_cpu,
+        B, H, L, D, false
+    );
+
+
+    // verify correctness
+    float max_error = 0.0f;
+    for(size_t i = 0; i < O_cpu.size(); i++){
+        float diff = std::abs(static_cast<float>(O_cpu[i]) - static_cast<float>(O_gpu[i]));
+        if(diff > max_error){
+            max_error = diff;
+        }
+    }   
+    printf("Max error: %f\n", max_error);
     return 0;
 }
