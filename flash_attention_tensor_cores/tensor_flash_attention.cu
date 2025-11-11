@@ -9,7 +9,7 @@ using namespace nvcuda::wmma;
 /*
 
 Tensor Flash Attention 2 CUDA Kernel
-This kernel implements the Flash Attention mechanism for efficient self-attention computation.
+This kernel implements the Flash Attention mechanism for efficient self-attention (is_casual = False) computation.
 It utilizes shared memory and warp-level primitives to optimize memory access patterns and reduce
 the overall computation time.
 
@@ -18,7 +18,7 @@ Author: Konrad Burdach
 
 Assumptions:
 - Input tensors Q, K, V, O are in half-precision (__half).
-- Softmax is computed in float32 for numerical stability.
+- Softmax is computed in float32 (to do) for numerical stability.
 - 4 warps per block each processing 16x16 tiles
 - head_dim is 128
 
@@ -35,6 +35,8 @@ __global__ void flash_attention_kernel(
     int tile
 ){
     extern __shared__ __half shared_mem[];
+
+
     int batch_id = blockIdx.y;
     int head_id = blockIdx.z;
     int tile_id = blockIdx.x;
@@ -56,12 +58,12 @@ __global__ void flash_attention_kernel(
 
     int B_r = tile;
     int T_r = L / 64;
+
     wmma::fragment<wmma::matrix_a, 16, 16, 16, __half, wmma::row_major> a_frag;
-    wmma::fragment<wmma::matrix_b, 16, 16, 16, __half, wmma::col_major> b_frag;
+    wmma::fragment<wmma::matrix_b, 16, 16, 16, __half, wmma::col_major> b_frag_col;
+    wmma::fragment<wmma::matrix_b, 16, 16, 16, __half, wmma::row_major> b_frag_row;
     wmma::fragment<wmma::accumulator, 16, 16, 16, __half> c_frag;
     nvcuda::wmma::fill_fragment(c_frag, 0.0);
-
-
 
 
     // loading Q into shared memory
@@ -88,9 +90,12 @@ __global__ void flash_attention_kernel(
             ( __half*)&shared_mem[K_V_offset_shmem],
             lane_id
         );
+
         cp_async_commit();
         cp_async_wait<0>();
+
         for(int j = 0; j < 64; j += 16) {
+
             for (int k = 0; k < 128; k += 16) {
             
                 int col = k;
@@ -98,12 +103,15 @@ __global__ void flash_attention_kernel(
 
                 // Load the inputs
                 nvcuda::wmma::load_matrix_sync(a_frag, &shared_mem[warp_id * 16 * D + col], 128);
-                nvcuda::wmma::load_matrix_sync(b_frag, &shared_mem[row * D + col], 128);
+                nvcuda::wmma::load_matrix_sync(b_frag_col, &shared_mem[row * D + col], 128);
 
                 // Perform the matrix multiplication
-                nvcuda::wmma::mma_sync(c_frag, a_frag, b_frag, c_frag);
+                nvcuda::wmma::mma_sync(c_frag, a_frag, b_frag_col, c_frag);
             }
+
             nvcuda::wmma::store_matrix_sync(&shared_mem[tile_offset_shmem + warp_id * 16 * D + j], c_frag, 64, nvcuda::wmma::mem_row_major);
+            nvcuda::wmma::fill_fragment(c_frag, 0.0);
+
         }
         // loading V into shared memory
         copy_block_GSM<GM2SM_async<__half>, __half>(
@@ -111,8 +119,10 @@ __global__ void flash_attention_kernel(
             ( __half*)&shared_mem[K_V_offset_shmem],
             lane_id
         );
+
         cp_async_commit();
         
+
         /*
         warp level reduction to compute softmax
         tile is size (64, 64) each warp computes (16, 64)
@@ -155,37 +165,50 @@ __global__ void flash_attention_kernel(
                 shared_mem[O_offset_shmem + offset_thread] = shared_mem[O_offset_shmem + offset_thread] * __expf(max_prev - max);
             }
         }
+
         cp_async_wait<0>();
+
         // compute output
+        for (int j = 0; j < 128; j += 16) {
+            load_matrix_sync(c_frag, &shared_mem[O_offset_shmem + warp_id * 16 * D + j], 128, nvcuda::wmma::mem_row_major);
+            for(int k = 0; k < 64; k += 16) {
+                int col = k;
+                int row = j;
+
+                // Load the inputs
+                nvcuda::wmma::load_matrix_sync(a_frag, &shared_mem[tile_offset_shmem + warp_id * 64 * 16 + col], 64);
+                nvcuda::wmma::load_matrix_sync(b_frag_row, &shared_mem[K_V_offset_shmem + row * D + col], 128);
+
+                // Perform the matrix multiplication
+                nvcuda::wmma::mma_sync(c_frag, a_frag, b_frag_row, c_frag);
+        }
+            nvcuda::wmma::store_matrix_sync(&shared_mem[O_offset_shmem + warp_id * 16 * D + j], c_frag, 128, nvcuda::wmma::mem_row_major);
+        }
+
+
+
+        cp_async_commit();
+        cp_async_wait<0>();
         
+        
+
+        
+
 
 
 }
 
     
+    // write back output to global memory
+    copy_block_GSM<SM2GM<__half>, __half>(
+        ( __half*)&O[O_offset],
+        ( __half*)&shared_mem[O_offset_shmem],
+        lane_id
+    );
+    cp_async_commit();
+    cp_async_wait<0>();
+        
 
-
-
-
-
-
-
-
-
-
-
-
-    __syncthreads();
-
-
-
-
-
-
-
-
-
-	
 
 
 
