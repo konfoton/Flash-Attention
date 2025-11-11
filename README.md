@@ -105,5 +105,5 @@ PyTorch SDPA (FlashAttention backend) vs math backend on the same shapes (GPU, h
 
 ## In progress
 
-I am adding implementiation with Tensor Cores
+I am adding implementation with Tensor Cores
 
