@@ -103,19 +103,7 @@ PyTorch SDPA (FlashAttention backend) vs math backend on the same shapes (GPU, h
   - L=512 | flash=0.2988 | math=3.9868
   - L=1024 | flash=1.0852 | math=14.7282
 
-## Why PyTorch is faster here
-I see worse results than PyTorch because this project does not use tensor cores for the core matrix multiplications. Although we use half precision for I/O, most math is performed as scalar float operations (after converting from half), which leaves tensor-core throughput untapped. PyTorch’s SDPA leverages optimized kernels (xFormers/Flash-Attn), tensor cores (mma.sync/WMMA), and carefully tuned tiling and memory layouts.
+## In progress
 
-In particular:
-- No tensor cores (WMMA/CUTLASS) used for Q·K^T or P·V
-- Shared memory stores tiles in float, increasing smem traffic vs half
-- Small tiles and frequent synchronization add overhead relative to arithmetic
-- Per-dimension reductions add extra cost as D grows
-
-## Next steps to close the gap
-- Switch to WMMA (mma.sync) or CUTLASS fragments for QK and PV computations
-- Keep Q/K/V tiles in half in shared memory and convert to float in registers
-- Vectorize memory ops with half2
-- Retune tile sizes (e.g., `KQVO_block_y` in {16, 32}) and reduce full-block barriers in favor of warp-level syncs
-- Compile with `-use_fast_math` and profile occupancy and smem usage
+I am adding implementiation with Tensor Cores
 
