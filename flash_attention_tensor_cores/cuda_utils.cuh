@@ -1,7 +1,8 @@
 #pragma once
 #include <cuda_runtime.h>
 #include <iostream>
-
+#include <cuda_fp16.h>
+#include <stdint.h>
 
 #define ROWS 4
 #define COLS 2

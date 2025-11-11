@@ -1,10 +1,8 @@
-
-
-#pragma once
-#include <cuda_utils.h>
 #include <cuda.h>
 #include <cuda_fp16.h>
 #include "tensor_flash_attention.cuh"
+#include <stdio.h>
+#include <stdlib.h>
 
 
 #ifndef CUDA_CHECK
@@ -39,46 +37,46 @@
 #include <cmath>
 #include <algorithm>
 static void attention_cpu(
-	const std::vector<float>& Q,
-	const std::vector<float>& K,
-	const std::vector<float>& V,
-	std::vector<float>& O,
-	int B, int H, int L, int D,
-	bool causal
+    const std::vector<float>& Q,
+    const std::vector<float>& K,
+    const std::vector<float>& V,
+    std::vector<float>& O,
+    int B, int H, int L, int D,
+    bool causal
 ) {
-	auto idx = [H, L, D](int b, int h, int i, int d) -> size_t {
-		return (((size_t)b * H + h) * L + i) * D + d;
-	};
-	float scale = 1.0f / std::sqrt((float)D);
+    auto idx = [H, L, D](int b, int h, int i, int d) -> size_t {
+        return (((size_t)b * H + h) * L + i) * D + d;
+    };
+    float scale = 1.0f / std::sqrt((float)D);
 
-	for (int b = 0; b < B; ++b) {
-		for (int h = 0; h < H; ++h) {
-			for (int i = 0; i < L; ++i) {
-				std::vector<float> scores(L, -1e30f);
-				for (int j = 0; j < L; ++j) {
-					if (causal && j > i) continue;
-					float dot = 0.0f;
-					for (int d = 0; d < D; ++d) {
-						dot += Q[idx(b, h, i, d)] * K[idx(b, h, j, d)];
-					}
-					scores[j] = dot * scale;
-				}
-				float m = -1e30f;
-				for (int j = 0; j < L; ++j) m = std::max(m, scores[j]);
-				float denom = 0.0f;
-				for (int j = 0; j < L; ++j) denom += std::exp(scores[j] - m);
-				if (denom <= 0) denom = 1.0f;
-				for (int d = 0; d < D; ++d) {
-					float outd = 0.0f;
-					for (int j = 0; j < L; ++j) {
-						float p = std::exp(scores[j] - m) / denom;
-						outd += p * V[idx(b, h, j, d)];
-					}
-					O[idx(b, h, i, d)] = outd;
-				}
-			}
-		}
-	}
+    for (int b = 0; b < B; ++b) {
+        for (int h = 0; h < H; ++h) {
+            for (int i = 0; i < L; ++i) {
+                std::vector<float> scores(L, -1e30f);
+                for (int j = 0; j < L; ++j) {
+                    if (causal && j > i) continue;
+                    float dot = 0.0f;
+                    for (int d = 0; d < D; ++d) {
+                        dot += Q[idx(b, h, i, d)] * K[idx(b, h, j, d)];
+                    }
+                    scores[j] = dot * scale;
+                }
+                float m = -1e30f;
+                for (int j = 0; j < L; ++j) m = std::max(m, scores[j]);
+                float denom = 0.0f;
+                for (int j = 0; j < L; ++j) denom += std::exp(scores[j] - m);
+                if (denom <= 0) denom = 1.0f;
+                for (int d = 0; d < D; ++d) {
+                    float outd = 0.0f;
+                    for (int j = 0; j < L; ++j) {
+                        float p = std::exp(scores[j] - m) / denom;
+                        outd += p * V[idx(b, h, j, d)];
+                    }
+                    O[idx(b, h, i, d)] = outd;
+                }
+            }
+        }
+    }
 }
 
 int main(){
@@ -99,22 +97,33 @@ int main(){
     CUDA_CHECK(cudaMalloc(&O, B * H * L * D* sizeof(__half)));
 
 
-    // host memory for correctness testing
-    std::vector<__half> Q_cpu(B * H * L * D);
-    std::vector<__half> K_cpu(B * H * L * D);
-    std::vector<__half> V_cpu(B * H * L * D);
-    std::vector<__half> O_cpu(B * H * L * D, 0.0f);
+    // host memory for correctness testing (compute in float32)
+    std::vector<float> Q_cpu(B * H * L * D);
+    std::vector<float> K_cpu(B * H * L * D);
+    std::vector<float> V_cpu(B * H * L * D);
+    std::vector<float> O_cpu(B * H * L * D, 0.0f);
 
+    // generate random float data in [0,1)
     for(size_t i = 0; i < Q_cpu.size(); i++){
-        __half val = static_cast<__half>(rand()) / RAND_MAX;
+        float val = static_cast<float>(rand()) / static_cast<float>(RAND_MAX);
         Q_cpu[i] = val;
         K_cpu[i] = val;
         V_cpu[i] = val;
     }
 
-    cudaMemcpy(Q, Q_cpu.data(), Q_cpu.size() * sizeof(__half), cudaMemcpyHostToDevice);
-    cudaMemcpy(K, K_cpu.data(), K_cpu.size() * sizeof(__half), cudaMemcpyHostToDevice);
-    cudaMemcpy(V, V_cpu.data(), V_cpu.size() * sizeof(__half), cudaMemcpyHostToDevice); 
+    // create temporary half buffers to copy to device
+    std::vector<__half> Q_half(Q_cpu.size());
+    std::vector<__half> K_half(K_cpu.size());
+    std::vector<__half> V_half(V_cpu.size());
+    for(size_t i = 0; i < Q_cpu.size(); ++i){
+        Q_half[i] = __float2half(Q_cpu[i]);
+        K_half[i] = __float2half(K_cpu[i]);
+        V_half[i] = __float2half(V_cpu[i]);
+    }
+
+    cudaMemcpy(Q, Q_half.data(), Q_half.size() * sizeof(__half), cudaMemcpyHostToDevice);
+    cudaMemcpy(K, K_half.data(), K_half.size() * sizeof(__half), cudaMemcpyHostToDevice);
+    cudaMemcpy(V, V_half.data(), V_half.size() * sizeof(__half), cudaMemcpyHostToDevice); 
 
 
     // hyperparameters
@@ -142,11 +151,11 @@ int main(){
 
 
     // copy back results
-    std::vector<__half> O_gpu(B * H * L * D);
-    CUDA_CHECK(cudaMemcpy(O_gpu.data(), O, O_cpu.size() * sizeof(__half), cudaMemcpyDeviceToHost));
+    // copy back results (device stores __half)
+    std::vector<__half> O_gpu_half(B * H * L * D);
+    CUDA_CHECK(cudaMemcpy(O_gpu_half.data(), O, O_gpu_half.size() * sizeof(__half), cudaMemcpyDeviceToHost));
 
-
-    // compute reference results on CPU
+    // compute reference results on CPU (float)
     attention_cpu(
         Q_cpu,
         K_cpu,
@@ -155,15 +164,20 @@ int main(){
         B, H, L, D, false
     );
 
+    // convert device half output to float for comparison
+    std::vector<float> O_gpu(O_gpu_half.size());
+    for(size_t i = 0; i < O_gpu_half.size(); ++i){
+        O_gpu[i] = __half2float(O_gpu_half[i]);
+    }
 
     // verify correctness
     float max_error = 0.0f;
     for(size_t i = 0; i < O_cpu.size(); i++){
-        float diff = std::abs(static_cast<float>(O_cpu[i]) - static_cast<float>(O_gpu[i]));
+        float diff = std::abs(O_cpu[i] - O_gpu[i]);
         if(diff > max_error){
             max_error = diff;
         }
-    }   
+    }
     printf("Max error: %f\n", max_error);
     return 0;
 }

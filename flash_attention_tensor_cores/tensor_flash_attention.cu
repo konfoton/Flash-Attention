@@ -1,11 +1,10 @@
-#include <cuda_utils.h>
+#include "cuda_utils.cuh"
 #include <cuda.h>
 #include <cuda_fp16.h>
 #include <mma.h>
-#include "tensor_flash_attention.h"
-using namespace nvcuda::wmma;
+#include "tensor_flash_attention.cuh"
 
-
+using namespace nvcuda;
 
 /*
 
@@ -144,11 +143,11 @@ __global__ void flash_attention_kernel(
         __half sum = 0.0f;
         for(int j = 0; j < 16; j++){
             int offset_thread = tile_offset_shmem + warp_id * 16 * 64 + j * 64 + lane_id;
-            max_prev = shared_mem[running_max_offset_shmem + warp_id * 16 * 2 + j * 2 + 0]
-            max = max((shared_mem[offset_thread]), shared_mem[offset_thread + 32]);
-            max = fmax(max, max_prev);
-            for(int offset = 16; offset >= 1; offset / 2){
-                max = fmax(max, __shfl_down_sync(0xffffffff, max, offset));
+            max_prev = shared_mem[running_max_offset_shmem + warp_id * 16 * 2 + j * 2 + 0];
+            max = __hmax((shared_mem[offset_thread]), shared_mem[offset_thread + 32]);
+            max = __hmax(max, max_prev);
+            for(int offset = 16; offset >= 1; offset = offset / 2){
+                max = __hmax(max, __shfl_down_sync(0xffffffff, max, offset));
             }
 
             // update running max
@@ -162,19 +161,19 @@ __global__ void flash_attention_kernel(
             sum += shared_mem[offset_thread];
             sum += shared_mem[offset_thread + 32];
 
-            for(int offset = 16; offset >= 1; offset / 2){
+            for(int offset = 16; offset >= 1; offset = offset / 2){
                 sum +=  __shfl_down_sync(0xffffffff, sum, offset);
             }
 
             // update running sum
             if(lane_id % 32 == 0){
-                shared_mem[running_max_offset_shmem + warp_id * 16 * 2 + j * 2 + 1] = shared_mem[running_max_offset_shmem + warp_id * 16 * 2 + j * 2 + 1] * __expf(max_prev - max) + sum;
+                shared_mem[running_max_offset_shmem + warp_id * 16 * 2 + j * 2 + 1] = __hmul(shared_mem[running_max_offset_shmem + warp_id * 16 * 2 + j * 2 + 1], __expf(max_prev - max)) + sum;
             }
 
             // updated output
             for(int k = 0; k < 128; k += 32){
                 int offset_thread = warp_id * 16 * 128 + j * 128 + lane_id + k;
-                shared_mem[O_offset_shmem + offset_thread] = shared_mem[O_offset_shmem + offset_thread] * __expf(max_prev - max);
+                shared_mem[O_offset_shmem + offset_thread] = __hmul(shared_mem[O_offset_shmem + offset_thread], __expf(max_prev - max));
             }
         }
 
