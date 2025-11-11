@@ -23,6 +23,8 @@ Assumptions:
 - head_dim is 128
 
 */
+
+
 __global__ void flash_attention_kernel(
 	const __half* __restrict__ Q,
 	const __half* __restrict__ K,
@@ -98,12 +100,12 @@ __global__ void flash_attention_kernel(
 
             for (int k = 0; k < 128; k += 16) {
             
-                int col = k;
-                int row = j;
+                int col_a = k;
+                int col_b = j;
 
                 // Load the inputs
-                nvcuda::wmma::load_matrix_sync(a_frag, &shared_mem[warp_id * 16 * D + col], 128);
-                nvcuda::wmma::load_matrix_sync(b_frag_col, &shared_mem[row * D + col], 128);
+                nvcuda::wmma::load_matrix_sync(a_frag, &shared_mem[warp_id * 16 * D + col_a], 128);
+                nvcuda::wmma::load_matrix_sync(b_frag_col, &shared_mem[col_b * D + col_a], 128);
 
                 // Perform the matrix multiplication
                 nvcuda::wmma::mma_sync(c_frag, a_frag, b_frag_col, c_frag);
@@ -172,12 +174,13 @@ __global__ void flash_attention_kernel(
         for (int j = 0; j < 128; j += 16) {
             load_matrix_sync(c_frag, &shared_mem[O_offset_shmem + warp_id * 16 * D + j], 128, nvcuda::wmma::mem_row_major);
             for(int k = 0; k < 64; k += 16) {
-                int col = k;
-                int row = j;
+                
+                int col_a = k;
+                int col_b = j;
 
                 // Load the inputs
-                nvcuda::wmma::load_matrix_sync(a_frag, &shared_mem[tile_offset_shmem + warp_id * 64 * 16 + col], 64);
-                nvcuda::wmma::load_matrix_sync(b_frag_row, &shared_mem[K_V_offset_shmem + row * D + col], 128);
+                nvcuda::wmma::load_matrix_sync(a_frag, &shared_mem[tile_offset_shmem + warp_id * 64 * 16 + col_a], 64);
+                nvcuda::wmma::load_matrix_sync(b_frag_row, &shared_mem[K_V_offset_shmem + col_a * D + col_b], 128);
 
                 // Perform the matrix multiplication
                 nvcuda::wmma::mma_sync(c_frag, a_frag, b_frag_row, c_frag);
@@ -185,18 +188,20 @@ __global__ void flash_attention_kernel(
             nvcuda::wmma::store_matrix_sync(&shared_mem[O_offset_shmem + warp_id * 16 * D + j], c_frag, 128, nvcuda::wmma::mem_row_major);
         }
 
-
-
-        cp_async_commit();
-        cp_async_wait<0>();
         
         
-
-        
-
-
-
 }
+    // scale output by running sum and 1/sqrt(D)
+    for(int j = 0; j < 16; j++){
+        __half running_sum = shared_mem[running_max_offset_shmem + warp_id * 16 * 2 + j * 2 + 1];
+        running_sum = __hdiv(__half(1.0f), running_sum);
+        running_sum = __hmul(running_sum, __half(1.0f / sqrtf((float)D)));
+        for(int k = 0; k < 128; k += 32){
+            int offset_thread = warp_id * 16 * 128 + j * 128 + lane_id + k;
+            shared_mem[O_offset_shmem + offset_thread] = __hmul(shared_mem[O_offset_shmem + offset_thread], running_sum);
+        }
+    }
+
 
     
     // write back output to global memory
