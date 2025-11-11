@@ -146,6 +146,36 @@ int main(){
 
     dim3 grid(L/ tile, B, H);
 
+    // Query device properties to diagnose kernel launch failure
+    int dev = 0;
+    cudaDeviceProp prop;
+    CUDA_CHECK(cudaGetDevice(&dev));
+    CUDA_CHECK(cudaGetDeviceProperties(&prop, dev));
+    
+    printf("=== Launch Configuration ===\n");
+    printf("Device: %s\n", prop.name);
+    printf("Device limits:\n");
+    printf("  maxThreadsPerBlock: %d\n", prop.maxThreadsPerBlock);
+    printf("  sharedMemPerBlock: %zu bytes\n", (size_t)prop.sharedMemPerBlock);
+    printf("  sharedMemPerMultiprocessor: %zu bytes\n", (size_t)prop.sharedMemPerMultiprocessor);
+    printf("\nRequested:\n");
+    printf("  Grid: (%d, %d, %d)\n", grid.x, grid.y, grid.z);
+    printf("  Threads per block: %d\n", threads_per_block);
+    printf("  Dynamic shared mem: %d bytes\n", shared_mem_needed);
+    printf("\nValidation:\n");
+    printf("  Threads per block OK? %s (limit: %d)\n", 
+           threads_per_block <= prop.maxThreadsPerBlock ? "YES" : "NO", prop.maxThreadsPerBlock);
+    printf("  Shared mem OK? %s (limit: %zu)\n", 
+           shared_mem_needed <= (int)prop.sharedMemPerBlock ? "YES" : "NO", (size_t)prop.sharedMemPerBlock);
+    printf("=============================\n\n");
+
+    // Increase dynamic shared memory limit for this kernel (RTX 3090 supports up to ~100KB)
+    CUDA_CHECK(cudaFuncSetAttribute(
+        flash_attention_kernel,
+        cudaFuncAttributeMaxDynamicSharedMemorySize,
+        shared_mem_needed
+    ));
+    printf("Set kernel max dynamic shared memory to: %d bytes\n\n", shared_mem_needed);
 
     flash_attention_kernel<<<grid, threads_per_block, shared_mem_needed>>>(Q, K, V, O, B, H, L, D, tile);
     CUDA_CHECK_LAST_KERNEL("flash_attention_kernel");

@@ -72,7 +72,7 @@ __global__ void flash_attention_kernel(
     copy_block_GSM<GM2SM_async<__half>, __half>(
         ( __half*)&Q[Q_offset],
         ( __half*)&shared_mem[0],
-        lane_id
+        warp_id
     );
     cp_async_commit();
 
@@ -81,7 +81,7 @@ __global__ void flash_attention_kernel(
     copy_block_GSM<GM2SM_async<__half>, __half>(
         ( __half*)&O[O_offset],
         ( __half*)&shared_mem[O_offset_shmem],
-        lane_id
+        warp_id
     );
     cp_async_commit();
 
@@ -99,7 +99,7 @@ __global__ void flash_attention_kernel(
         copy_block_GSM<GM2SM_async<__half>, __half>(
             ( __half*)&K[K_offset + i * tile * D],
             ( __half*)&shared_mem[K_V_offset_shmem],
-            lane_id
+            warp_id
         );
 
         cp_async_commit();
@@ -128,7 +128,7 @@ __global__ void flash_attention_kernel(
         copy_block_GSM<GM2SM_async<__half>, __half>(
             ( __half*)&V[V_offset + i * tile * D],
             ( __half*)&shared_mem[K_V_offset_shmem],
-            lane_id
+            warp_id
         );
 
         cp_async_commit();
@@ -217,7 +217,7 @@ __global__ void flash_attention_kernel(
     copy_block_GSM<SM2GM<__half>, __half>(
         ( __half*)&O[O_offset],
         ( __half*)&shared_mem[O_offset_shmem],
-        lane_id
+        warp_id
     );
     cp_async_commit();
     cp_async_wait<0>();

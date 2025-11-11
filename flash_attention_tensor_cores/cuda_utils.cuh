@@ -56,18 +56,19 @@ template <typename op,
 __forceinline__ __device__ constexpr void copy_block_GSM(
 	value_t *gmem,
 	value_t *smem,
-    const int lane_id
+    const int warp_id
 )
 
     {
-    int thread_row = threadIdx.x / 8; 
-    int thread_col = threadIdx.x % 8;
+    int lane_id = threadIdx.x % 32;
+    int thread_row = lane_id / 8; 
+    int thread_col = lane_id % 8;
     #pragma unroll
     for (int r = 0; r < ROWS; ++r) {
         #pragma unroll
         for (int c = 0; c < COLS; ++c) {
-            op()(&gmem[lane_id * 16 * HEAD_DIM + r * 4 * HEAD_DIM + thread_row * HEAD_DIM + c * 64 + thread_col],
-                 &smem[lane_id * 16 * HEAD_DIM + r * 4 * HEAD_DIM + thread_row * HEAD_DIM + c * 64 + thread_col]);
+            op()(&gmem[warp_id * 16 * HEAD_DIM + r * 4 * HEAD_DIM + thread_row * HEAD_DIM + c * 64 + thread_col],
+                 &smem[warp_id * 16 * HEAD_DIM + r * 4 * HEAD_DIM + thread_row * HEAD_DIM + c * 64 + thread_col]);
         }
     }
 }
