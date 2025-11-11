@@ -14,6 +14,7 @@ Both GPU paths use half-precision (__half) inputs/outputs with float accumulatio
 - `pytorch_implemtation.ipynb` — PyTorch SDPA timing on the same shapes
 - `normal_attention_cpu.cpp` - cpu implementation for validity check
 - `Makefile` — Build rules
+- `flash_attention_tensor_cores` - currently in progress
 
 ## Build
 Set the proper compute capability in the Makefile (e.g., `sm_86` for Ampere). Then build the benchmark:
