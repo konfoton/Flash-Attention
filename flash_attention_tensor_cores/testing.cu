@@ -3,6 +3,7 @@
 #include "tensor_flash_attention.cuh"
 #include <stdio.h>
 #include <stdlib.h>
+#include <cuda_runtime.h>
 
 
 #ifndef CUDA_CHECK
@@ -143,10 +144,10 @@ int main(){
     int number_of_blocks = B * H * (L / tile);
     int threads_per_block = number_of_warps * 32;
 
-    dim3 gridDim(L/ tile, B, H);
+    dim3 grid(L/ tile, B, H);
 
 
-    flash_attention_kernel<<<gridDim, threads_per_block, shared_mem_needed>>>(Q, K, V, O, B, H, L, D, tile);
+    flash_attention_kernel<<<grid, threads_per_block, shared_mem_needed>>>(Q, K, V, O, B, H, L, D, tile);
     CUDA_CHECK_LAST_KERNEL("flash_attention_kernel");
 
 
