@@ -97,14 +97,69 @@ __global__ void flash_attention_kernel(
                 int row = j;
 
                 // Load the inputs
-                nvcuda::wmma::load_matrix_sync(a_frag, &shared_mem[lane_id * 16 * D + col], 128);
+                nvcuda::wmma::load_matrix_sync(a_frag, &shared_mem[warp_id * 16 * D + col], 128);
                 nvcuda::wmma::load_matrix_sync(b_frag, &shared_mem[row * D + col], 128);
 
                 // Perform the matrix multiplication
                 nvcuda::wmma::mma_sync(c_frag, a_frag, b_frag, c_frag);
             }
-            nvcuda::wmma::store_matrix_sync(&shared_mem[tile_offset_shmem + lane_id * 16 * D + j], c_frag, 128, nvcuda::wmma::mem_row_major);
+            nvcuda::wmma::store_matrix_sync(&shared_mem[tile_offset_shmem + warp_id * 16 * D + j], c_frag, 64, nvcuda::wmma::mem_row_major);
         }
+        // loading V into shared memory
+        copy_block_GSM<GM2SM_async<__half>, __half>(
+            ( __half*)&V[V_offset + i * tile * D],
+            ( __half*)&shared_mem[K_V_offset_shmem],
+            lane_id
+        );
+        cp_async_commit();
+        
+        /*
+        warp level reduction to compute softmax
+        tile is size (64, 64) each warp computes (16, 64)
+        */
+        __half max = 0.0f;
+        __half max_prev = 0.0f;
+        __half sum = 0.0f;
+        for(int j = 0; j < 16; j++){
+            int offset_thread = tile_offset_shmem + warp_id * 16 * 64 + j * 64 + lane_id;
+            max_prev = shared_mem[running_max_offset_shmem + warp_id * 16 * 2 + j * 2 + 0]
+            max = max((shared_mem[offset_thread]), shared_mem[offset_thread + 32]);
+            max = fmax(max, max_prev);
+            for(int offset = 16; offset >= 1; offset / 2){
+                max = fmax(max, __shfl_down_sync(0xffffffff, max, offset));
+            }
+
+            // update running max
+            if(lane_id % 32 == 0){
+                shared_mem[running_max_offset_shmem + warp_id * 16 * 2 + j * 2 + 0] = max;
+            }
+
+            max = __shfl_sync(0xffffffff, max, 0);
+            shared_mem[offset_thread] = __expf((shared_mem[offset_thread] - max));
+            shared_mem[offset_thread + 32] = __expf((shared_mem[offset_thread + 32] - max));
+            sum += shared_mem[offset_thread];
+            sum += shared_mem[offset_thread + 32];
+
+            for(int offset = 16; offset >= 1; offset / 2){
+                sum +=  __shfl_down_sync(0xffffffff, sum, offset);
+            }
+
+            // update running sum
+            if(lane_id % 32 == 0){
+                shared_mem[running_max_offset_shmem + warp_id * 16 * 2 + j * 2 + 1] = shared_mem[running_max_offset_shmem + warp_id * 16 * 2 + j * 2 + 1] * __expf(max_prev - max) + sum;
+            }
+
+            // updated output
+            for(int k = 0; k < 128; k += 32){
+                int offset_thread = warp_id * 16 * 128 + j * 128 + lane_id + k;
+                shared_mem[O_offset_shmem + offset_thread] = shared_mem[O_offset_shmem + offset_thread] * __expf(max_prev - max);
+            }
+        }
+        cp_async_wait<0>();
+        // compute output
+        
+
+
 }
 
     
