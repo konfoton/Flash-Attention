@@ -48,12 +48,12 @@ __global__ void flash_attention_kernel(
 
 
     int Q_offset = batch_id * H * L * D + head_id * L * D + tile_id * tile * D;
-    int K_offset = batch_id * H * L * D + head_id * L * D + tile_id * tile * D;
-    int V_offset = batch_id * H * L * D + head_id * L * D + tile_id * tile * D;
+    int K_offset = batch_id * H * L * D + head_id * L * D;
+    int V_offset = batch_id * H * L * D + head_id * L * D;
     int O_offset = batch_id * H * L * D + head_id * L * D + tile_id * tile * D;
-    int O_offset_shmem = D * tile;;
+    int O_offset_shmem = D * tile;
     int K_V_offset_shmem = D * tile + O_offset_shmem;
-    int tile_offset_shmem = D * tile + O_offset_shmem;
+    int tile_offset_shmem = D * tile + K_V_offset_shmem;
     int running_max_offset_shmem =  tile * tile + tile_offset_shmem;
 
 
@@ -65,7 +65,7 @@ __global__ void flash_attention_kernel(
     wmma::fragment<wmma::matrix_b, 16, 16, 16, __half, wmma::col_major> b_frag_col;
     wmma::fragment<wmma::matrix_b, 16, 16, 16, __half, wmma::row_major> b_frag_row;
     wmma::fragment<wmma::accumulator, 16, 16, 16, __half> c_frag;
-    nvcuda::wmma::fill_fragment(c_frag, 0.0);
+    nvcuda::wmma::fill_fragment(c_frag, __float2half(0.0f));
 
 
     // loading Q into shared memory
@@ -77,14 +77,9 @@ __global__ void flash_attention_kernel(
     cp_async_commit();
 
 
-    // loading O into shared memory
-    copy_block_GSM<GM2SM_async<__half>, __half>(
-        ( __half*)&O[O_offset],
-        ( __half*)&shared_mem[O_offset_shmem],
-        warp_id
-    );
-    cp_async_commit();
-
+    for (int idx = tid; idx < D * tile; idx += blockDim.x) {
+        shared_mem[O_offset_shmem + idx] = __float2half(0.0f);
+    }
     // setting running max to -INF and sum to zero
     if(lane_id < 16){
             shared_mem[running_max_offset_shmem + warp_id * 16 * 2 + lane_id * 2 + 0] = -65504.0f; // -INF for __half
@@ -121,8 +116,8 @@ __global__ void flash_attention_kernel(
                 nvcuda::wmma::mma_sync(c_frag, a_frag, b_frag_col, c_frag);
             }
 
-            nvcuda::wmma::store_matrix_sync(&shared_mem[tile_offset_shmem + warp_id * 16 * D + j], c_frag, 64, nvcuda::wmma::mem_row_major);
-            nvcuda::wmma::fill_fragment(c_frag, 0.0);
+            nvcuda::wmma::store_matrix_sync(&shared_mem[tile_offset_shmem + warp_id * 16 * 64 + j], c_frag, 64, nvcuda::wmma::mem_row_major);
+            nvcuda::wmma::fill_fragment(c_frag, __float2half(0.0f));
 
         }
         // loading V into shared memory
@@ -146,8 +141,8 @@ __global__ void flash_attention_kernel(
         for(int j = 0; j < 16; j++){
             int offset_thread = tile_offset_shmem + warp_id * 16 * 64 + j * 64 + lane_id;
             max_prev = __half2float(shared_mem[running_max_offset_shmem + warp_id * 16 * 2 + j * 2 + 0]);
-            float val1 = __half2float(shared_mem[offset_thread]);
-            float val2 = __half2float(shared_mem[offset_thread + 32]);
+            float val1 = __half2float(shared_mem[offset_thread]) * scale;
+            float val2 = __half2float(shared_mem[offset_thread + 32]) * scale;
             max = fmaxf(fmaxf(val1, val2), max_prev);
             
             for(int offset = 16; offset >= 1; offset = offset / 2){
@@ -160,8 +155,8 @@ __global__ void flash_attention_kernel(
             }
 
             max = __shfl_sync(0xffffffff, max, 0);
-            float exp1 = expf(val1 * scale - max);
-            float exp2 = expf(val2 * scale - max);
+            float exp1 = expf(val1 - max);
+            float exp2 = expf(val2 - max);
             shared_mem[offset_thread] = __float2half(exp1);
             shared_mem[offset_thread + 32] = __float2half(exp2);
             sum = exp1 + exp2;
@@ -178,11 +173,11 @@ __global__ void flash_attention_kernel(
             }
 
             // updated output
-            float scale = expf(max_prev - max);
+            float scale_second = expf(max_prev - max);
             for(int k = 0; k < 128; k += 32){
                 int offset_thread_out = warp_id * 16 * 128 + j * 128 + lane_id + k;
                 float val = __half2float(shared_mem[O_offset_shmem + offset_thread_out]);
-                shared_mem[O_offset_shmem + offset_thread_out] = __float2half(val * scale);
+                shared_mem[O_offset_shmem + offset_thread_out] = __float2half(val * scale_second);
             }
         }
 
@@ -210,7 +205,6 @@ __global__ void flash_attention_kernel(
         
     }
 
-    // scale output by running sum and 1/sqrt(D)
     for(int j = 0; j < 16; j++){
         __half running_sum = shared_mem[running_max_offset_shmem + warp_id * 16 * 2 + j * 2 + 1];
         running_sum = __hdiv(__half(1.0f), running_sum);
