@@ -67,8 +67,8 @@ __forceinline__ __device__ constexpr void copy_block_GSM(
     for (int r = 0; r < ROWS; ++r) {
         #pragma unroll
         for (int c = 0; c < COLS; ++c) {
-            op()(&gmem[warp_id * 16 * 16 + r * 4 * 16 + thread_row * 16 + c * 8 + thread_col],
-                 &smem[warp_id * 16 * 16 + r * 4 * 16 + thread_row * 16 + c * 8 + thread_col]);
+            op()(&gmem[warp_id * 16 * 16 * 8 + r * 4 * 16 * 8 + thread_row * 16 + c * 8 * 8 + thread_col * 8 ],
+                 &smem[warp_id * 16 * 16 * 8 + r * 4 * 16 * 8 + thread_row * 16 * 8 + c * 8 * 8+ thread_col * 8]);
         }
     }
 }

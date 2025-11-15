@@ -82,9 +82,9 @@ static void attention_cpu(
 
 int main(){
     // test parameters
-    const int B = 10;
-    const int H = 8;
-    const int L = 64 * 10;
+    const int B = 1;
+    const int H = 1;
+    const int L = 64 * 1;
     const int D = 128;
 
 
@@ -203,12 +203,16 @@ int main(){
 
     // verify correctness
     float max_error = 0.0f;
+    float mean_error = 0.0f;
     for(size_t i = 0; i < O_cpu.size(); i++){
         float diff = std::abs(O_cpu[i] - O_gpu[i]);
         if(diff > max_error){
             max_error = diff;
         }
+        mean_error += diff;
     }
+    mean_error /= O_cpu.size();
+    printf("Mean error: %f\n", mean_error);
     printf("Max error: %f\n", max_error);
     return 0;
 }

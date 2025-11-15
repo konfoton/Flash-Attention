@@ -138,42 +138,49 @@ __global__ void flash_attention_kernel(
         warp level reduction to compute softmax
         tile is size (64, 64) each warp computes (16, 64)
         */
-        __half max = 0.0f;
-        __half max_prev = 0.0f;
-        __half sum = 0.0f;
+        float max = 0.0f;
+        float max_prev = 0.0f;
+        float sum = 0.0f;
         for(int j = 0; j < 16; j++){
             int offset_thread = tile_offset_shmem + warp_id * 16 * 64 + j * 64 + lane_id;
-            max_prev = shared_mem[running_max_offset_shmem + warp_id * 16 * 2 + j * 2 + 0];
-            max = __hmax((shared_mem[offset_thread]), shared_mem[offset_thread + 32]);
-            max = __hmax(max, max_prev);
+            max_prev = __half2float(shared_mem[running_max_offset_shmem + warp_id * 16 * 2 + j * 2 + 0]);
+            float val1 = __half2float(shared_mem[offset_thread]);
+            float val2 = __half2float(shared_mem[offset_thread + 32]);
+            max = fmaxf(fmaxf(val1, val2), max_prev);
+            
             for(int offset = 16; offset >= 1; offset = offset / 2){
-                max = __hmax(max, __shfl_down_sync(0xffffffff, max, offset));
+                max = fmaxf(max, __shfl_down_sync(0xffffffff, max, offset));
             }
 
             // update running max
             if(lane_id % 32 == 0){
-                shared_mem[running_max_offset_shmem + warp_id * 16 * 2 + j * 2 + 0] = max;
+                shared_mem[running_max_offset_shmem + warp_id * 16 * 2 + j * 2 + 0] = __float2half(max);
             }
 
             max = __shfl_sync(0xffffffff, max, 0);
-            shared_mem[offset_thread] = __expf((shared_mem[offset_thread] - max));
-            shared_mem[offset_thread + 32] = __expf((shared_mem[offset_thread + 32] - max));
-            sum += shared_mem[offset_thread];
-            sum += shared_mem[offset_thread + 32];
+            float exp1 = expf(val1 - max);
+            float exp2 = expf(val2 - max);
+            shared_mem[offset_thread] = __float2half(exp1);
+            shared_mem[offset_thread + 32] = __float2half(exp2);
+            sum = exp1 + exp2;
 
             for(int offset = 16; offset >= 1; offset = offset / 2){
-                sum +=  __shfl_down_sync(0xffffffff, sum, offset);
+                sum += __shfl_down_sync(0xffffffff, sum, offset);
             }
 
             // update running sum
             if(lane_id % 32 == 0){
-                shared_mem[running_max_offset_shmem + warp_id * 16 * 2 + j * 2 + 1] = __hmul(shared_mem[running_max_offset_shmem + warp_id * 16 * 2 + j * 2 + 1], __expf(max_prev - max)) + sum;
+                float prev_sum = __half2float(shared_mem[running_max_offset_shmem + warp_id * 16 * 2 + j * 2 + 1]);
+                float new_sum = prev_sum * expf(max_prev - max) + sum;
+                shared_mem[running_max_offset_shmem + warp_id * 16 * 2 + j * 2 + 1] = __float2half(new_sum);
             }
 
             // updated output
+            float scale = expf(max_prev - max);
             for(int k = 0; k < 128; k += 32){
-                int offset_thread = warp_id * 16 * 128 + j * 128 + lane_id + k;
-                shared_mem[O_offset_shmem + offset_thread] = __hmul(shared_mem[O_offset_shmem + offset_thread], __expf(max_prev - max));
+                int offset_thread_out = warp_id * 16 * 128 + j * 128 + lane_id + k;
+                float val = __half2float(shared_mem[O_offset_shmem + offset_thread_out]);
+                shared_mem[O_offset_shmem + offset_thread_out] = __float2half(val * scale);
             }
         }
 
