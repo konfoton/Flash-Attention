@@ -82,8 +82,8 @@ __global__ void flash_attention_kernel(
     }
     // setting running max to -INF and sum to zero
     if(lane_id < 16){
-            shared_mem[running_max_offset_shmem + warp_id * 16 * 2 + lane_id * 2 + 0] = -65504.0f; // -INF for __half
-            shared_mem[running_max_offset_shmem + warp_id * 16 * 2 + lane_id * 2 + 1] = 0.0f;
+            shared_mem[running_max_offset_shmem + warp_id * 16 * 2 + lane_id * 2 + 0] = CUDART_MIN_DENORM_FP16; // -INF for __half
+            shared_mem[running_max_offset_shmem + warp_id * 16 * 2 + lane_id * 2 + 1] = __float2half(0.0f);
     }
 
     __syncwarp();
@@ -110,7 +110,7 @@ __global__ void flash_attention_kernel(
 
                 // Load the inputs
                 nvcuda::wmma::load_matrix_sync(a_frag, &shared_mem[warp_id * 16 * D + col_a], 128);
-                nvcuda::wmma::load_matrix_sync(b_frag_col, &shared_mem[col_b * D + col_a], 128);
+                nvcuda::wmma::load_matrix_sync(b_frag_col, &shared_mem[K_V_offset_shmem + col_b * D + col_a], 128);
 
                 // Perform the matrix multiplication
                 nvcuda::wmma::mma_sync(c_frag, a_frag, b_frag_col, c_frag);
