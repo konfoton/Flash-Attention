@@ -104,6 +104,7 @@ __global__ void flash_attention_kernel(
 
         cp_async_commit();
         cp_async_wait<0>();
+        __syncthreads();
 
         for(int j = 0; j < 64; j += 16) {
 
@@ -141,6 +142,7 @@ __global__ void flash_attention_kernel(
         float max = 0.0f;
         float max_prev = 0.0f;
         float sum = 0.0f;
+        float scale = 1.0f / sqrtf((float)D);
         for(int j = 0; j < 16; j++){
             int offset_thread = tile_offset_shmem + warp_id * 16 * 64 + j * 64 + lane_id;
             max_prev = __half2float(shared_mem[running_max_offset_shmem + warp_id * 16 * 2 + j * 2 + 0]);
@@ -158,8 +160,8 @@ __global__ void flash_attention_kernel(
             }
 
             max = __shfl_sync(0xffffffff, max, 0);
-            float exp1 = expf(val1 - max);
-            float exp2 = expf(val2 - max);
+            float exp1 = expf(val1 * scale - max);
+            float exp2 = expf(val2 * scale - max);
             shared_mem[offset_thread] = __float2half(exp1);
             shared_mem[offset_thread + 32] = __float2half(exp2);
             sum = exp1 + exp2;
@@ -185,6 +187,7 @@ __global__ void flash_attention_kernel(
         }
 
         cp_async_wait<0>();
+        __syncthreads();
 
         // compute output
         for (int j = 0; j < 128; j += 16) {
@@ -211,7 +214,6 @@ __global__ void flash_attention_kernel(
     for(int j = 0; j < 16; j++){
         __half running_sum = shared_mem[running_max_offset_shmem + warp_id * 16 * 2 + j * 2 + 1];
         running_sum = __hdiv(__half(1.0f), running_sum);
-        running_sum = __hmul(running_sum, __half(1.0f / sqrtf((float)D)));
         for(int k = 0; k < 128; k += 32){
             int offset_thread = warp_id * 16 * 128 + j * 128 + lane_id + k;
             shared_mem[O_offset_shmem + offset_thread] = __hmul(shared_mem[O_offset_shmem + offset_thread], running_sum);

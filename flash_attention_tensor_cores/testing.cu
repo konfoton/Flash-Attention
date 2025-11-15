@@ -214,5 +214,8 @@ int main(){
     mean_error /= O_cpu.size();
     printf("Mean error: %f\n", mean_error);
     printf("Max error: %f\n", max_error);
+    for(int i = 0; i < 10; i++){
+        printf("O_cpu[%d] = %f, O_gpu[%d] = %f\n", i, O_cpu[i], i, O_gpu[i]);
+    }
     return 0;
 }
