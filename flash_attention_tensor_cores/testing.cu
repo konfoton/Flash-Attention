@@ -83,8 +83,8 @@ static void attention_cpu(
 int main(){
     // test parameters
     const int B = 1;
-    const int H = 1;
-    const int L = 64 * 1;
+    const int H = 128;
+    const int L = 5 * 128;
     const int D = 128;
 
 
