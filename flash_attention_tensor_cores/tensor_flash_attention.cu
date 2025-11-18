@@ -52,9 +52,9 @@ __global__ void flash_attention_kernel(
     int V_offset = batch_id * H * L * D + head_id * L * D;
     int O_offset = batch_id * H * L * D + head_id * L * D + tile_id * tile * D;
     int O_offset_shmem = D * tile;
-    int K_V_offset_shmem = D * tile + O_offset_shmem;
+    int K_V_offset_shmem = D * tile * 2 + O_offset_shmem;
     int tile_offset_shmem = D * tile + K_V_offset_shmem;
-    int running_max_offset_shmem =  tile * tile + tile_offset_shmem;
+    int running_max_offset_shmem =  tile * tile * 2 + tile_offset_shmem;
 
 
 
@@ -64,8 +64,8 @@ __global__ void flash_attention_kernel(
     wmma::fragment<wmma::matrix_a, 16, 16, 16, __half, wmma::row_major> a_frag;
     wmma::fragment<wmma::matrix_b, 16, 16, 16, __half, wmma::col_major> b_frag_col;
     wmma::fragment<wmma::matrix_b, 16, 16, 16, __half, wmma::row_major> b_frag_row;
-    wmma::fragment<wmma::accumulator, 16, 16, 16, __half> c_frag;
-    nvcuda::wmma::fill_fragment(c_frag, __float2half(0.0f));
+    wmma::fragment<wmma::accumulator, 16, 16, 16, float> c_frag;
+    nvcuda::wmma::fill_fragment(c_frag, 0.0f);
 
 
     // loading Q into shared memory
@@ -116,8 +116,8 @@ __global__ void flash_attention_kernel(
                 nvcuda::wmma::mma_sync(c_frag, a_frag, b_frag_col, c_frag);
             }
 
-            nvcuda::wmma::store_matrix_sync(&shared_mem[tile_offset_shmem + warp_id * 16 * 64 + j], c_frag, 64, nvcuda::wmma::mem_row_major);
-            nvcuda::wmma::fill_fragment(c_frag, __float2half(0.0f));
+            nvcuda::wmma::store_matrix_sync((float*)&shared_mem[tile_offset_shmem + warp_id * 16 * 64 + j], c_frag, 64, nvcuda::wmma::mem_row_major);
+            nvcuda::wmma::fill_fragment(c_frag, 0.0f);
 
         }
         // loading V into shared memory
@@ -140,9 +140,9 @@ __global__ void flash_attention_kernel(
         float scale = 1.0f / sqrtf((float)D);
         for(int j = 0; j < 16; j++){
             int offset_thread = tile_offset_shmem + warp_id * 16 * 64 + j * 64 + lane_id;
-            max_prev = __half2float(shared_mem[running_max_offset_shmem + warp_id * 16 + j]);
-            float val1 = __half2float(shared_mem[offset_thread]) * scale;
-            float val2 = __half2float(shared_mem[offset_thread + 32]) * scale;
+            max_prev = ((float*)shared_mem)[running_max_offset_shmem + warp_id * 16 + j];
+            float val1 = ((float*)shared_mem)[offset_thread] * scale;
+            float val2 = ((float*)shared_mem)[offset_thread + 32] * scale;
             max = fmaxf(fmaxf(val1, val2), max_prev);
             
             for(int offset = 16; offset >= 1; offset = offset / 2){
@@ -199,7 +199,7 @@ __global__ void flash_attention_kernel(
                 // Perform the matrix multiplication
                 nvcuda::wmma::mma_sync(c_frag, a_frag, b_frag_row, c_frag);
         }
-            nvcuda::wmma::store_matrix_sync(&shared_mem[O_offset_shmem + warp_id * 16 * D + j], c_frag, 128, nvcuda::wmma::mem_row_major);
+            nvcuda::wmma::store_matrix_sync((float*)&shared_mem[O_offset_shmem + warp_id * 16 * D + j], c_frag, 128, nvcuda::wmma::mem_row_major);
         }
 
         

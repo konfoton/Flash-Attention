@@ -3,6 +3,8 @@
 #include <iostream>
 #include <cuda_fp16.h>
 #include <stdint.h>
+#include <type_traits>
+
 
 #define ROWS 4
 #define COLS 2
@@ -57,7 +59,7 @@ __forceinline__ __device__ constexpr void copy_block_GSM(
 	value_t *gmem,
 	value_t *smem,
     const int warp_id
-)
+){
 
     if constexpr (std::is_same_v<value_t, __half>) {
     // float16 implementation
@@ -91,4 +93,5 @@ __forceinline__ __device__ constexpr void copy_block_GSM(
         }
     }
 
+}
 }
