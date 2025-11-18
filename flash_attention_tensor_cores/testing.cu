@@ -84,7 +84,7 @@ int main(){
     // test parameters
     const int B = 1;
     const int H = 128;
-    const int L = 3 * 64;
+    const int L = 4 * 64;
     const int D = 128;
 
 

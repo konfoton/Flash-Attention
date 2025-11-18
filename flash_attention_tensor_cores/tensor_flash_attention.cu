@@ -171,8 +171,8 @@ __global__ void flash_attention_kernel(
             }
 
             // update running sum
+            float prev_sum = ((float*)&shared_mem[running_max_offset_shmem] + warp_id * 2 * 16 + j * 2 + 1)[0];
             if(lane_id % 32 == 0){
-                float prev_sum = ((float*)&shared_mem[running_max_offset_shmem] + warp_id * 2 * 16 + j * 2 + 1)[0];
                 float new_sum = prev_sum * expf(max_prev - max) + sum;
                 ((float*)&shared_mem[running_max_offset_shmem] + warp_id * 2 * 16 + j * 2 + 1)[0] = new_sum;
             }
@@ -183,7 +183,7 @@ __global__ void flash_attention_kernel(
             for(int k = 0; k < 128; k += 32){
                 int offset_thread_out = warp_id * 16 * 128 + j * 128 + lane_id + k;
                 float val = (((float*)&shared_mem[O_offset_shmem]) + offset_thread_out)[0];
-                (((float*)&shared_mem[O_offset_shmem]) + offset_thread_out)[0] = val * scale_second;
+                (((float*)&shared_mem[O_offset_shmem]) + offset_thread_out)[0] = val * scale_second * prev_sum;
             }
         }
 
@@ -214,17 +214,29 @@ __global__ void flash_attention_kernel(
             nvcuda::wmma::store_matrix_sync((((float*)&shared_mem[O_offset_shmem]) + warp_id * 16 * D + j), c_frag, 128, nvcuda::wmma::mem_row_major);
         }
 
+
+        
+        /* NUMERICAL STABILITY */
+        for(int j = 0; j < 16; j++){
+            float running_sum = ((float*)&shared_mem[running_max_offset_shmem] + warp_id * 16 * 2 + j * 2 + 1)[0];
+            running_sum = 1.0f / running_sum;
+            for(int k = 0; k < 128; k += 32){
+                int offset_thread = warp_id * 16 * 128 + j * 128 + lane_id + k;
+                ((float*)&shared_mem[O_offset_shmem])[offset_thread] = ((float*)&shared_mem[O_offset_shmem])[offset_thread] * running_sum;
+            }
+        }
+
         
     }
 
-    for(int j = 0; j < 16; j++){
-        float running_sum = ((float*)&shared_mem[running_max_offset_shmem] + warp_id * 16 * 2 + j * 2 + 1)[0];
-        running_sum = 1.0f / running_sum;
-        for(int k = 0; k < 128; k += 32){
-            int offset_thread = warp_id * 16 * 128 + j * 128 + lane_id + k;
-            ((float*)&shared_mem[O_offset_shmem])[offset_thread] = ((float*)&shared_mem[O_offset_shmem])[offset_thread] * running_sum;
-        }
-    }
+    // for(int j = 0; j < 16; j++){
+    //     float running_sum = ((float*)&shared_mem[running_max_offset_shmem] + warp_id * 16 * 2 + j * 2 + 1)[0];
+    //     running_sum = 1.0f / running_sum;
+    //     for(int k = 0; k < 128; k += 32){
+    //         int offset_thread = warp_id * 16 * 128 + j * 128 + lane_id + k;
+    //         ((float*)&shared_mem[O_offset_shmem])[offset_thread] = ((float*)&shared_mem[O_offset_shmem])[offset_thread] * running_sum;
+    //     }
+    // }
 
 
     
