@@ -177,6 +177,7 @@ __global__ void flash_attention_kernel(
                 ((float*)&shared_mem[running_max_offset_shmem] + warp_id * 2 * 16 + j * 2 + 1)[0] = new_sum;
             }
 
+            
             // updated output
             float scale_second = expf(max_prev - max);
             for(int k = 0; k < 128; k += 32){
