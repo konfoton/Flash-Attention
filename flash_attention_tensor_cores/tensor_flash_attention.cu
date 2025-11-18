@@ -29,7 +29,7 @@ __global__ void flash_attention_kernel(
 	const __half* __restrict__ Q,
 	const __half* __restrict__ K,
 	const __half* __restrict__ V,
-	__half* __restrict__ O,
+	float* __restrict__ O,
 	int B, 
     int H, 
     int L, 
@@ -77,8 +77,9 @@ __global__ void flash_attention_kernel(
     cp_async_commit();
 
 
+    // Initialize O buffer in shared memory as float zeros
     for (int idx = tid; idx < D * tile; idx += blockDim.x) {
-        shared_mem[O_offset_shmem + idx] = __float2half(0.0f);
+        ((float*)&shared_mem[O_offset_shmem])[idx] = 0.0f;
     }
     // setting running max to -INF and sum to zero
     if(lane_id < 16){
@@ -225,10 +226,10 @@ __global__ void flash_attention_kernel(
 
 
     
-    // write back output to global memory
-    copy_block_GSM<SM2GM<__half>, __half>(
-        ( __half*)&O[O_offset],
-        ( __half*)&shared_mem[O_offset_shmem],
+    // write back output to global memory (store as float)
+    copy_block_GSM<SM2GM<float>, float>(
+        (float*)&O[O_offset],
+        (float*)&shared_mem[O_offset_shmem],
         warp_id
     );
     cp_async_commit();

@@ -91,11 +91,12 @@ int main(){
 
     
     // allocate memory
-    __half *Q, *K, *V, *O;
+    __half *Q, *K, *V;
+    float *O;
     CUDA_CHECK(cudaMalloc(&Q, B * H * L * D* sizeof(__half)));
     CUDA_CHECK(cudaMalloc(&K, B * H * L * D* sizeof(__half)));
     CUDA_CHECK(cudaMalloc(&V, B * H * L * D* sizeof(__half)));
-    CUDA_CHECK(cudaMalloc(&O, B * H * L * D* sizeof(__half)));
+    CUDA_CHECK(cudaMalloc(&O, B * H * L * D* sizeof(float)));
 
 
     // host memory for correctness testing (compute in float32)
@@ -183,10 +184,9 @@ int main(){
     CUDA_CHECK_LAST_KERNEL("flash_attention_kernel");
 
 
-    // copy back results
-    // copy back results (device stores __half)
-    std::vector<__half> O_gpu_half(B * H * L * D);
-    CUDA_CHECK(cudaMemcpy(O_gpu_half.data(), O, O_gpu_half.size() * sizeof(__half), cudaMemcpyDeviceToHost));
+    // copy back results (device stores float)
+    std::vector<float> O_gpu(B * H * L * D);
+    CUDA_CHECK(cudaMemcpy(O_gpu.data(), O, O_gpu.size() * sizeof(float), cudaMemcpyDeviceToHost));
 
     // compute reference results on CPU (float)
     attention_cpu(
@@ -197,11 +197,7 @@ int main(){
         B, H, L, D, false
     );
 
-    // convert device half output to float for comparison
-    std::vector<float> O_gpu(O_gpu_half.size());
-    for(size_t i = 0; i < O_gpu_half.size(); ++i){
-        O_gpu[i] = __half2float(O_gpu_half[i]);
-    }
+    // O is already float on device; no conversion needed
 
     // verify correctness
     float max_error = 0.0f;
