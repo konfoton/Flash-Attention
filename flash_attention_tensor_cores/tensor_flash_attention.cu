@@ -82,8 +82,8 @@ __global__ void flash_attention_kernel(
     }
     // setting running max to -INF and sum to zero
     if(lane_id < 16){
-            shared_mem[running_max_offset_shmem + warp_id * 16 * 2 + lane_id * 2 + 0] = CUDART_MIN_DENORM_FP16; // -INF for __half
-            shared_mem[running_max_offset_shmem + warp_id * 16 * 2 + lane_id * 2 + 1] = __float2half(0.0f);
+            shared_mem[running_max_offset_shmem + warp_id * 16 + lane_id] = CUDART_MIN_DENORM_FP16; // -INF for __half
+            ((float*)&shared_mem[64 + running_max_offset_shmem + warp_id * 16 + lane_id * 2])[0] = 0.0f;
     }
 
     __syncwarp();
@@ -140,7 +140,7 @@ __global__ void flash_attention_kernel(
         float scale = 1.0f / sqrtf((float)D);
         for(int j = 0; j < 16; j++){
             int offset_thread = tile_offset_shmem + warp_id * 16 * 64 + j * 64 + lane_id;
-            max_prev = __half2float(shared_mem[running_max_offset_shmem + warp_id * 16 * 2 + j * 2 + 0]);
+            max_prev = __half2float(shared_mem[running_max_offset_shmem + warp_id * 16 + j]);
             float val1 = __half2float(shared_mem[offset_thread]) * scale;
             float val2 = __half2float(shared_mem[offset_thread + 32]) * scale;
             max = fmaxf(fmaxf(val1, val2), max_prev);
@@ -151,7 +151,7 @@ __global__ void flash_attention_kernel(
 
             // update running max
             if(lane_id % 32 == 0){
-                shared_mem[running_max_offset_shmem + warp_id * 16 * 2 + j * 2 + 0] = __float2half(max);
+                shared_mem[running_max_offset_shmem + warp_id * 16 + j] = __float2half(max);
             }
 
             max = __shfl_sync(0xffffffff, max, 0);
@@ -167,9 +167,9 @@ __global__ void flash_attention_kernel(
 
             // update running sum
             if(lane_id % 32 == 0){
-                float prev_sum = __half2float(shared_mem[running_max_offset_shmem + warp_id * 16 * 2 + j * 2 + 1]);
+                float prev_sum = ((float*)&shared_mem[64 + running_max_offset_shmem + warp_id * 16 + j * 2])[0];
                 float new_sum = prev_sum * expf(max_prev - max) + sum;
-                shared_mem[running_max_offset_shmem + warp_id * 16 * 2 + j * 2 + 1] = __float2half(new_sum);
+                ((float*)&shared_mem[64 + running_max_offset_shmem + warp_id * 16 + j * 2])[0] = new_sum;
             }
 
             // updated output
@@ -206,8 +206,8 @@ __global__ void flash_attention_kernel(
     }
 
     for(int j = 0; j < 16; j++){
-        __half running_sum = shared_mem[running_max_offset_shmem + warp_id * 16 * 2 + j * 2 + 1];
-        running_sum = __hdiv(__half(1.0f), running_sum);
+        float running_sum = ((float*)&shared_mem[64 + running_max_offset_shmem + warp_id * 16 + j * 2])[0];
+        running_sum = 1.0f / running_sum;
         for(int k = 0; k < 128; k += 32){
             int offset_thread = warp_id * 16 * 128 + j * 128 + lane_id + k;
             shared_mem[O_offset_shmem + offset_thread] = __hmul(shared_mem[O_offset_shmem + offset_thread], running_sum);

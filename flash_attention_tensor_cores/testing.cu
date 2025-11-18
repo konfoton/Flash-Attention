@@ -134,7 +134,9 @@ int main(){
     shared_mem_needed += D * tile * sizeof(__half); // output
     shared_mem_needed += D * tile * sizeof(__half); // keys + values idepdendently
     shared_mem_needed += tile * tile * sizeof(__half); // tile
-    shared_mem_needed += 64 * 2 * sizeof(__half); // running max sum per tile
+    shared_mem_needed += 64 * sizeof(__half); // running max
+    shared_mem_needed += 64 * sizeof(float); // running sum
+    
 
 
 
