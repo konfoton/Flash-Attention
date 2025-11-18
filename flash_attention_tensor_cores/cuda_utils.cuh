@@ -59,7 +59,8 @@ __forceinline__ __device__ constexpr void copy_block_GSM(
     const int warp_id
 )
 
-    {
+    if constexpr (std::is_same_v<value_t, __half>) {
+    // float16 implementation
     int lane_id = threadIdx.x % 32;
     int thread_row = lane_id / 8; 
     int thread_col = lane_id % 8;
@@ -70,5 +71,24 @@ __forceinline__ __device__ constexpr void copy_block_GSM(
             op()(&gmem[warp_id * 16 * HEAD_DIM + r * 4 * HEAD_DIM + thread_row * HEAD_DIM + c * 8 * 8 + thread_col * 8],
                  &smem[warp_id * 16 * HEAD_DIM + r * 4 * HEAD_DIM + thread_row * HEAD_DIM + c * 8 * 8 + thread_col * 8]);
         }
+    } 
+    } else if (std::is_same_v<value_t, float>) {
+    /*
+    (64, 512) in terms of bytes
+    COLS = 4
+    ROWS = 4
+    */
+    // float32 implementation
+    int lane_id = threadIdx.x % 32;
+    int thread_row = lane_id / 8; 
+    int thread_col = lane_id % 8;
+    #pragma unroll
+    for (int r = 0; r < 4; ++r) {
+        #pragma unroll
+        for (int c = 0; c < 4; ++c) {
+            op()(&gmem[warp_id * 16 * HEAD_DIM * 2 + r * 4 * HEAD_DIM * 2 + thread_row * HEAD_DIM * 2 + c * 8 * 8 + thread_col * 8],
+                 &smem[warp_id * 16 * HEAD_DIM * 2 + r * 4 * HEAD_DIM * 2 + thread_row * HEAD_DIM * 2 + c * 8 * 8 + thread_col * 8]);
+        }
     }
+
 }
