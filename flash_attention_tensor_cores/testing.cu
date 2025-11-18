@@ -137,6 +137,7 @@ int main(){
     shared_mem_needed += tile * tile * sizeof(float); // tile
     shared_mem_needed += 64 * sizeof(float); // running max
     shared_mem_needed += 64 * sizeof(float); // running sum
+    shared_mem_needed += 64 * sizeof(float); // local max
     
 
 

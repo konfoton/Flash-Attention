@@ -55,6 +55,7 @@ __global__ void flash_attention_kernel(
     int K_V_offset_shmem = D * tile * 2 + O_offset_shmem;
     int tile_offset_shmem = D * tile + K_V_offset_shmem;
     int running_max_offset_shmem =  tile * tile * 2 + tile_offset_shmem;
+    int local_max_offset_shmem = 64 * 2 * 2 + running_max_offset_shmem;
 
 
 
@@ -137,54 +138,65 @@ __global__ void flash_attention_kernel(
         warp level reduction to compute softmax
         tile is size (64, 64) each warp computes (16, 64)
         */
-        float max = 0.0f;
-        float max_prev = 0.0f;
-        float sum = 0.0f;
+        float max_local = 0.0f;
         float scale = 1.0f / sqrtf((float)D);
+        float max_prev = 0.0f;
+        float max = 0.0f;
+        float sum = 0.0f;
+        float prev_sum = 0.0f;
+        float scale_second = 1.0f;
         for(int j = 0; j < 16; j++){
             int offset_thread = warp_id * 16 * 64 + j * 64 + lane_id;
-            max_prev = ((float*)(&shared_mem[running_max_offset_shmem]))[warp_id * 16 * 2 + j * 2 + 0];
             float val1 = (((float*)&shared_mem[tile_offset_shmem])[offset_thread]) * scale;
             float val2 = (((float*)&shared_mem[tile_offset_shmem])[offset_thread + 32]) * scale;
-            max = fmaxf(fmaxf(val1, val2), max_prev);
-            
+            max_local = fmaxf(fmaxf(val1, val2));
+
             for(int offset = 16; offset >= 1; offset = offset / 2){
-                max = fmaxf(max, __shfl_down_sync(0xffffffff, max, offset));
+                max_local = fmaxf(max_local, __shfl_down_sync(0xffffffff, max_local, offset));
             }
-            
-            // update running max
+
+            max_local = __shfl_sync(0xffffffff, max_local, 0);
+
+
+            if(lane_id % 32 == 0){
+                ((float*)&shared_mem[local_max_offset_shmem])[warp_id * 16 + j] = max_local;
+            }
+            /*synchornization is done here so i can write to shared mem*/
+            float exp1 = expf(val1 - max_local);
+            float exp2 = expf(val2 - max_local);
+            int new_offset_thread = warp_id * 16 * 128 + j * 128 + lane_id;
+            shared_mem[tile_offset_shmem + new_offset_thread] = __float2half(exp1);
+            shared_mem[tile_offset_shmem + new_offset_thread + 32] = __float2half(exp2);
+
+
+            max_prev = ((float*)&shared_mem[running_max_offset_shmem])[warp_id * 16 * 2 + j * 2 + 0];
+            max = fmaxf(max_prev, max_local);
             if(lane_id % 32 == 0){
                 ((float*)&shared_mem[running_max_offset_shmem])[warp_id * 16 * 2 + j * 2 + 0] = max;
             }
 
-            max = __shfl_sync(0xffffffff, max, 0);
-            /*synchornization is done here so i can write to shared mem*/
-            float exp1 = expf(val1 - max);
-            float exp2 = expf(val2 - max);
-            int new_offset_thread = warp_id * 16 * 128 + j * 128 + lane_id;
-            shared_mem[tile_offset_shmem + new_offset_thread] = __float2half(exp1);
-            shared_mem[tile_offset_shmem + new_offset_thread + 32] = __float2half(exp2);
             sum = exp1 + exp2;
-
             for(int offset = 16; offset >= 1; offset = offset / 2){
                 sum += __shfl_down_sync(0xffffffff, sum, offset);
             }
 
-            // update running sum
-            float prev_sum = ((float*)&shared_mem[running_max_offset_shmem] + warp_id * 2 * 16 + j * 2 + 1)[0];
-            if(lane_id % 32 == 0){
-                float new_sum = prev_sum * expf(max_prev - max) + sum;
-                ((float*)&shared_mem[running_max_offset_shmem] + warp_id * 2 * 16 + j * 2 + 1)[0] = new_sum;
-            }
 
-            
-            // updated output
-            float scale_second = expf(max_prev - max);
+
+            prev_sum = ((float*)&shared_mem[running_max_offset_shmem] + warp_id * 2 * 16 + j * 2 + 1)[0];
+            scale_second = expf(max_prev - max);
             for(int k = 0; k < 128; k += 32){
                 int offset_thread_out = warp_id * 16 * 128 + j * 128 + lane_id + k;
                 float val = (((float*)&shared_mem[O_offset_shmem]) + offset_thread_out)[0];
                 (((float*)&shared_mem[O_offset_shmem]) + offset_thread_out)[0] = val * scale_second * prev_sum;
             }
+
+            if(lane_id % 32 == 0){
+                float new_sum = prev_sum * expf(max_prev - max) + sum * expf(max_local - max);
+                ((float*)&shared_mem[running_max_offset_shmem] + warp_id * 2 * 16 + j * 2 + 1)[0] = new_sum;
+
+            }
+
+
         }
 
         /*After calculating softmax i will cast the output to float16
@@ -216,6 +228,21 @@ __global__ void flash_attention_kernel(
 
 
         
+
+
+
+        float max = 0.0f;
+        float max_prev = 0.0f;
+        float local_max = 0.0f;
+        float sum = 0.0f;
+        for(int j = 0; j < 16; j++){
+            local_max = ((float*)&shared_mem[local_max_offset_shmem])[warp_id * 16 + j];
+            
+
+        }
+
+
+
         /* NUMERICAL STABILITY */
         for(int j = 0; j < 16; j++){
             float running_sum = ((float*)&shared_mem[running_max_offset_shmem] + warp_id * 16 * 2 + j * 2 + 1)[0];
