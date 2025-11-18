@@ -82,7 +82,7 @@ __global__ void flash_attention_kernel(
     }
     // setting running max to -INF and sum to zero
     if(lane_id < 16){
-           ((float*)&shared_mem[running_max_offset_shmem] + warp_id * 16 * 2 + lane_id * 2 + 0)[0] = CUDART_MIN_DENORM_FP32; // -INF for __half
+           ((float*)&shared_mem[running_max_offset_shmem] + warp_id * 16 * 2 + lane_id * 2 + 0)[0] = -10000.0f; // -INF for __half
            ((float*)&shared_mem[running_max_offset_shmem] + warp_id * 16 * 2 + lane_id * 2 + 1)[0] = 0.0f;
     }
 
@@ -141,7 +141,7 @@ __global__ void flash_attention_kernel(
         float sum = 0.0f;
         float scale = 1.0f / sqrtf((float)D);
         for(int j = 0; j < 16; j++){
-            int offset_thread = tile_offset_shmem + warp_id * 16 * 64 + j * 64 + lane_id;
+            int offset_thread = warp_id * 16 * 64 + j * 64 + lane_id;
             max_prev = ((float*)(&shared_mem[running_max_offset_shmem]))[warp_id * 16 * 2 + j * 2 + 0];
             float val1 = ((float*)&shared_mem[tile_offset_shmem])[offset_thread] * scale;
             float val2 = ((float*)&shared_mem[tile_offset_shmem])[offset_thread + 32] * scale;
