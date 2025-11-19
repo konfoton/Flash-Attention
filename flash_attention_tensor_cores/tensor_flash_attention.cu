@@ -231,9 +231,9 @@ __global__ void flash_attention_kernel(
             /* UPDATING to NEW MAX MOVING TO REAL O AND MUTIPLYING RESULT BY DIAG(l_{i}^new)^-1 */
             int group = lane_id / 16;
             int new_lane = lane_id % 16;
-            int max_local;
-            int max_global;
-            int new_sum;
+            float max_local;
+            float max_global;
+            float new_sum;
             for(int m = 0; m < 8; m++){
                 max_local = ((float*)&shared_mem[local_max_offset_shmem])[warp_id * 16 + m * 2 + group];
                 max_global = ((float*)&shared_mem[running_max_offset_shmem])[warp_id * 16 * 2 + m * 4 + group * 2 + 0];
