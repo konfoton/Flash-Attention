@@ -150,7 +150,7 @@ __global__ void flash_attention_kernel(
             int offset_thread = warp_id * 16 * 64 + j * 64 + lane_id;
             float val1 = (((float*)&shared_mem[tile_offset_shmem])[offset_thread]) * scale;
             float val2 = (((float*)&shared_mem[tile_offset_shmem])[offset_thread + 32]) * scale;
-            max_local = fmaxf(fmaxf(val1, val2));
+            max_local = fmaxf(val1, val2);
 
             for(int offset = 16; offset >= 1; offset = offset / 2){
                 max_local = fmaxf(max_local, __shfl_down_sync(0xffffffff, max_local, offset));
@@ -230,19 +230,20 @@ __global__ void flash_attention_kernel(
 
             /* UPDATING to NEW MAX MOVING TO REAL O AND MUTIPLYING RESULT BY DIAG(l_{i}^new)^-1 */
             int group = lane_id / 16;
+            int new_lane = lane_id % 16;
             int max_local;
             int max_global;
             int new_sum;
             for(int m = 0; m < 8; m++){
-                max_local = ((float*)&shared_mem[local_max_offset_shmem])[warp_id * 16 + m * 4 + group * 2];
+                max_local = ((float*)&shared_mem[local_max_offset_shmem])[warp_id * 16 + m * 2 + group * 2];
                 max_global = ((float*)&shared_mem[running_max_offset_shmem])[warp_id * 16 * 2 + m * 4 + group * 2 + 0];
                 new_sum = ((float*)&shared_mem[running_max_offset_shmem])[warp_id * 16 * 2 + m * 4  + group * 2 + 1];
 
 
                 float scale_update = expf(max_local - max_global);
-                int offset_thread_within = warp_id * 16 * 16 + m * 2 * 16 + group * 16 + lane_id;
+                int offset_thread_within = warp_id * 16 * 16 + m * 2 * 16 + group * 16 + new_lane;
                 float val = (((float*)&shared_mem[offset_to_process]) + offset_thread_within)[0];
-                int offset_thread_out_final_output = warp_id * 16 * 128 + m * 2 * 128 + group * 128 + lane_id + k;
+                int offset_thread_out_final_output = warp_id * 16 * 128 + m * 2 * 128 + group * 128 + new_lane + j;
                 (((float*)&shared_mem[O_offset_shmem]) + offset_thread_out_final_output)[0] += val * scale_update;
                 (((float*)&shared_mem[O_offset_shmem]) + offset_thread_out_final_output)[0] *= (1.0f / new_sum);
             }
