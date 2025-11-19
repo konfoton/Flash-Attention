@@ -188,7 +188,7 @@ __global__ void flash_attention_kernel(
             for(int k = 0; k < 128; k += 32){
                 int offset_thread_out = warp_id * 16 * 128 + j * 128 + lane_id + k;
                 float val = (((float*)&shared_mem[O_offset_shmem]) + offset_thread_out)[0];
-                (((float*)&shared_mem[O_offset_shmem]) + offset_thread_out)[0] = val * scale_second * prev_sum;
+                (((float*)&shared_mem[O_offset_shmem]) + offset_thread_out)[0] = prev_sum * scale_second * val;
             }
 
             if(lane_id % 32 == 0){
