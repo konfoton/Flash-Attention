@@ -138,6 +138,7 @@ int main(){
     shared_mem_needed += 64 * sizeof(float); // running max
     shared_mem_needed += 64 * sizeof(float); // running sum
     shared_mem_needed += 64 * sizeof(float); // local max
+    shared_mem_needed += 16 * 16 * 4 * sizeof(float); 
     
 
 
