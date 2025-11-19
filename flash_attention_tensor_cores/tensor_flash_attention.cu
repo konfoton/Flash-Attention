@@ -56,7 +56,7 @@ __global__ void flash_attention_kernel(
     int tile_offset_shmem = D * tile + K_V_offset_shmem;
     int running_max_offset_shmem =  tile * tile * 2 + tile_offset_shmem;
     int local_max_offset_shmem = 64 * 2 * 2 + running_max_offset_shmem;
-    int offset_to_process = 64 * 4 + local_max_offset_shmem;
+    int offset_to_process = 64 * 2 + local_max_offset_shmem;
 
 
 
@@ -235,7 +235,7 @@ __global__ void flash_attention_kernel(
             int max_global;
             int new_sum;
             for(int m = 0; m < 8; m++){
-                max_local = ((float*)&shared_mem[local_max_offset_shmem])[warp_id * 16 + m * 2 + group * 2];
+                max_local = ((float*)&shared_mem[local_max_offset_shmem])[warp_id * 16 + m * 2 + group];
                 max_global = ((float*)&shared_mem[running_max_offset_shmem])[warp_id * 16 * 2 + m * 4 + group * 2 + 0];
                 new_sum = ((float*)&shared_mem[running_max_offset_shmem])[warp_id * 16 * 2 + m * 4  + group * 2 + 1];
 
@@ -247,9 +247,11 @@ __global__ void flash_attention_kernel(
                 (((float*)&shared_mem[O_offset_shmem]) + offset_thread_out_final_output)[0] += val * scale_update;
                 (((float*)&shared_mem[O_offset_shmem]) + offset_thread_out_final_output)[0] *= (1.0f / new_sum);
             }
+        
 
 
         }
+        __syncthreads();
 
 
         
