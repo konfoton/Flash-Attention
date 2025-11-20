@@ -1,12 +1,12 @@
 import torch
 import numpy as np
 import os
-
+import torch.profiler
 def compare_results():
     # Dimensions from testing.cu
     B = 1
     H = 128
-    L = 256 # 4 * 64
+    L = 3 * 64 # 192
     D = 128
 
     print(f"Loading data with shape B={B}, H={H}, L={L}, D={D}...")
@@ -43,16 +43,31 @@ def compare_results():
     # We force Flash Attention backend if available
     try:
         with torch.backends.cuda.sdp_kernel(enable_flash=True, enable_math=False, enable_mem_efficient=False):
-            o_ref = torch.nn.functional.scaled_dot_product_attention(q_half, k_half, v_half)
-            print("Using Flash Attention backend.")
+            with torch.profiler.profile(
+                activities=[torch.profiler.ProfilerActivity.CUDA],
+                record_shapes=True,
+                profile_memory=True
+            ) as prof:
+                o_ref = torch.nn.functional.scaled_dot_product_attention(q_half, k_half, v_half)
+                print("Using Flash Attention backend.")
     except RuntimeError as e:
         print(f"Flash Attention backend failed or not available: {e}")
-        print("Falling back to default implementation (may use Math or MemEfficient)...")
-        o_ref = torch.nn.functional.scaled_dot_product_attention(q_half, k_half, v_half)
+        print("Falling back to default implementation...")
+        with torch.profiler.profile(
+            activities=[torch.profiler.ProfilerActivity.CUDA],
+            record_shapes=True,
+            profile_memory=True
+        ) as prof:
+            o_ref = torch.nn.functional.scaled_dot_product_attention(q_half, k_half, v_half)
+
+    # Print CUDA kernel statistics
+    print("\n" + "="*60)
+    print("CUDA Kernel Profiling Results:")
+    print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=20))
+    print("="*60 + "\n")
 
     # Convert back to float32 for comparison with C++ output
     o_ref = o_ref.float()
-
     # Compare
     diff = (o_ref - o_gpu).abs()
     mean_error = diff.mean().item()

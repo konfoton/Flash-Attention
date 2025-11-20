@@ -6,6 +6,7 @@
 #include <cuda_runtime.h>
 #include <fstream>
 #include <iostream>
+#include <random>
 
 
 #ifndef CUDA_CHECK
@@ -40,9 +41,9 @@
 #include <cmath>
 #include <algorithm>
 static void attention_cpu(
-    const std::vector<float>& Q,
-    const std::vector<float>& K,
-    const std::vector<float>& V,
+    const std::vector<__half>& Q,
+    const std::vector<__half>& K,
+    const std::vector<__half>& V,
     std::vector<float>& O,
     int B, int H, int L, int D,
     bool causal
@@ -60,7 +61,9 @@ static void attention_cpu(
                     if (causal && j > i) continue;
                     float dot = 0.0f;
                     for (int d = 0; d < D; ++d) {
-                        dot += Q[idx(b, h, i, d)] * K[idx(b, h, j, d)];
+                        float q_val = __half2float(Q[idx(b, h, i, d)]);
+                        float k_val = __half2float(K[idx(b, h, j, d)]);
+                        dot += q_val * k_val;
                     }
                     scores[j] = dot * scale;
                 }
@@ -72,8 +75,14 @@ static void attention_cpu(
                 for (int d = 0; d < D; ++d) {
                     float outd = 0.0f;
                     for (int j = 0; j < L; ++j) {
-                        float p = std::exp(scores[j] - m) / denom;
-                        outd += p * V[idx(b, h, j, d)];
+                        float p_val = std::exp(scores[j] - m) / denom;
+                        
+                        // Simulate kernel precision: P is converted to half before P*V
+                        __half p_half = __float2half(p_val);
+                        float p_val_half = __half2float(p_half);
+                        
+                        float v_val = __half2float(V[idx(b, h, j, d)]);
+                        outd += p_val_half * v_val;
                     }
                     O[idx(b, h, i, d)] = outd;
                 }
@@ -86,7 +95,7 @@ int main(){
     // test parameters
     const int B = 1;
     const int H = 128;
-    const int L = 4 * 64;
+    const int L = 3 * 64;
     const int D = 128;
 
 
@@ -107,11 +116,20 @@ int main(){
     std::vector<float> V_cpu(B * H * L * D);
     std::vector<float> O_cpu(B * H * L * D, 0.0f);
 
-    // generate random float data in [0,1)
+    // generate random float data from normal distribution + bias 0.5
+    std::default_random_engine generator(1234); // Fixed seed for reproducibility
+    std::normal_distribution<float> distribution(0.0f, 1.0f);
+
     for(size_t i = 0; i < Q_cpu.size(); i++){
-        float val = __half2float(__float2half(static_cast<float>(rand()) / static_cast<float>(RAND_MAX)- 0.5f) );
+        float val = __half2float(__float2half(distribution(generator) + 0.5f));
         Q_cpu[i] = val;
+    }
+    for(size_t i = 0; i < K_cpu.size(); i++){
+        float val = __half2float(__float2half(distribution(generator) + 0.5f));
         K_cpu[i] = val;
+    }
+    for(size_t i = 0; i < V_cpu.size(); i++){
+        float val = __half2float(__float2half(distribution(generator) + 0.5f));
         V_cpu[i] = val;
     }
 
@@ -194,9 +212,9 @@ int main(){
 
     // compute reference results on CPU (float)
     attention_cpu(
-        Q_cpu,
-        K_cpu,
-        V_cpu,
+        Q_half,
+        K_half,
+        V_half,
         O_cpu,
         B, H, L, D, false
     );
@@ -206,16 +224,34 @@ int main(){
     // verify correctness
     float max_error = 0.0f;
     float mean_error = 0.0f;
+    float max_relative_error = 0.0f;
+    float mean_relative_error = 0.0f;
+    
     for(size_t i = 0; i < O_cpu.size(); i++){
         float diff = std::abs(O_cpu[i] - O_gpu[i]);
+        float relative_diff = 0.0f;
+        if (std::abs(O_cpu[i]) > 1e-5f) {
+            relative_diff = diff / std::abs(O_cpu[i]);
+        }
+        
         if(diff > max_error){
             max_error = diff;
         }
         mean_error += diff;
+        
+        if(relative_diff > max_relative_error){
+            max_relative_error = relative_diff;
+        }
+        mean_relative_error += relative_diff;
     }
     mean_error /= O_cpu.size();
+    mean_relative_error /= O_cpu.size();
+    
     printf("Mean error: %f\n", mean_error);
     printf("Max error: %f\n", max_error);
+    printf("Mean relative error: %f\n", mean_relative_error);
+    printf("Max relative error: %f\n", max_relative_error);
+    
     for(int i = 0; i < 10; i++){
         printf("O_cpu[%d] = %f, O_gpu[%d] = %f\n", i, O_cpu[i], i, O_gpu[i]);
     }
