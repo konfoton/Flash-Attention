@@ -3,6 +3,7 @@
 #include <cuda_fp16.h>
 #include <mma.h>
 #include "tensor_flash_attention.cuh"
+#include <stdio.h>
 
 using namespace nvcuda;
 
@@ -85,7 +86,7 @@ __global__ void flash_attention_kernel(
     }
     // setting running max to -INF and sum to zero
     if(lane_id < 16){
-           ((float*)&shared_mem[running_max_offset_shmem] + warp_id * 16 * 2 + lane_id * 2 + 0)[0] = -10000.0f; // -INF for __half
+           ((float*)&shared_mem[running_max_offset_shmem] + warp_id * 16 * 2 + lane_id * 2 + 0)[0] = -1e30f; // -INF for __half
            ((float*)&shared_mem[running_max_offset_shmem] + warp_id * 16 * 2 + lane_id * 2 + 1)[0] = 0.0f;
     }
 
@@ -188,13 +189,17 @@ __global__ void flash_attention_kernel(
             for(int k = 0; k < 128; k += 32){
                 int offset_thread_out = warp_id * 16 * 128 + j * 128 + lane_id + k;
                 float val = (((float*)&shared_mem[O_offset_shmem]) + offset_thread_out)[0];
-                (((float*)&shared_mem[O_offset_shmem]) + offset_thread_out)[0] = prev_sum * scale_second * val;
+                (((float*)&shared_mem[O_offset_shmem]) + offset_thread_out)[0] = scale_second * val;
             }
 
             if(lane_id % 32 == 0){
                 float new_sum = prev_sum * expf(max_prev - max) + sum * expf(max_local - max);
                 ((float*)&shared_mem[running_max_offset_shmem] + warp_id * 2 * 16 + j * 2 + 1)[0] = new_sum;
 
+                if (blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && warp_id == 0 && j == 0) {
+                     printf("i=%d j=%d max_prev=%f max_local=%f max=%f prev_sum=%f sum=%f new_sum=%f scale_second=%f scale_update=%f\n",
+                        i, j, max_prev, max_local, max, prev_sum, sum, new_sum, scale_second, expf(max_local - max));
+                }
             }
 
 
@@ -245,7 +250,11 @@ __global__ void flash_attention_kernel(
                 float val = (((float*)&shared_mem[offset_to_process]) + offset_thread_within)[0];
                 int offset_thread_out_final_output = warp_id * 16 * 128 + m * 2 * 128 + group * 128 + new_lane + j;
                 (((float*)&shared_mem[O_offset_shmem]) + offset_thread_out_final_output)[0] += val * scale_update;
-                (((float*)&shared_mem[O_offset_shmem]) + offset_thread_out_final_output)[0] *= (1.0f / new_sum);
+                if(blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && warp_id == 0 && m == 0 && j == 0){
+                    printf("m=%d group=%d new_lane=%d max_local=%f max_global=%f new_sum=%f scale_update=%f val=%f final_output=%f\n",
+                        m, group, new_lane, max_local, max_global, new_sum, scale_update, val,
+                        (((float*)&shared_mem[O_offset_shmem]) + offset_thread_out_final_output)[0]);
+                }
             }
         
 
@@ -283,14 +292,18 @@ __global__ void flash_attention_kernel(
         
     }
 
-    // for(int j = 0; j < 16; j++){
-    //     float running_sum = ((float*)&shared_mem[running_max_offset_shmem] + warp_id * 16 * 2 + j * 2 + 1)[0];
-    //     running_sum = 1.0f / running_sum;
-    //     for(int k = 0; k < 128; k += 32){
-    //         int offset_thread = warp_id * 16 * 128 + j * 128 + lane_id + k;
-    //         ((float*)&shared_mem[O_offset_shmem])[offset_thread] = ((float*)&shared_mem[O_offset_shmem])[offset_thread] * running_sum;
-    //     }
-    // }
+    for(int j = 0; j < 16; j++){
+        float running_sum = ((float*)&shared_mem[running_max_offset_shmem] + warp_id * 16 * 2 + j * 2 + 1)[0];
+        running_sum = 1.0f / running_sum;
+        for(int k = 0; k < 128; k += 32){
+            int offset_thread = warp_id * 16 * 128 + j * 128 + lane_id + k;
+            if(blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && warp_id == 0 && j == 1){
+                printf("final output check: offset_thread=%f value=%f\n",1.0f / running_sum, ((float*)&shared_mem[O_offset_shmem])[offset_thread]);
+        }
+            ((float*)&shared_mem[O_offset_shmem])[offset_thread] = ((float*)&shared_mem[O_offset_shmem])[offset_thread] * running_sum;
+        
+    }
+}
 
 
     

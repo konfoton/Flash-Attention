@@ -4,6 +4,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <cuda_runtime.h>
+#include <fstream>
+#include <iostream>
 
 
 #ifndef CUDA_CHECK
@@ -107,7 +109,7 @@ int main(){
 
     // generate random float data in [0,1)
     for(size_t i = 0; i < Q_cpu.size(); i++){
-        float val = static_cast<float>(rand()) / static_cast<float>(RAND_MAX);
+        float val = __half2float(__float2half(static_cast<float>(rand()) / static_cast<float>(RAND_MAX)- 0.5f) );
         Q_cpu[i] = val;
         K_cpu[i] = val;
         V_cpu[i] = val;
@@ -217,5 +219,24 @@ int main(){
     for(int i = 0; i < 10; i++){
         printf("O_cpu[%d] = %f, O_gpu[%d] = %f\n", i, O_cpu[i], i, O_gpu[i]);
     }
+
+    // Dump data to binary files for PyTorch comparison
+    auto dump_file = [](const std::string& filename, const std::vector<float>& data) {
+        std::ofstream file(filename, std::ios::binary);
+        if (file.is_open()) {
+            file.write(reinterpret_cast<const char*>(data.data()), data.size() * sizeof(float));
+            file.close();
+            std::cout << "Saved " << filename << std::endl;
+        } else {
+            std::cerr << "Unable to open file " << filename << std::endl;
+        }
+    };
+
+    dump_file("Q.bin", Q_cpu);
+    dump_file("K.bin", K_cpu);
+    dump_file("V.bin", V_cpu);
+    dump_file("O_gpu.bin", O_gpu);
+    dump_file("O_cpu.bin", O_cpu);
+
     return 0;
 }

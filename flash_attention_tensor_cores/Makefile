@@ -1,4 +1,4 @@
-NVCC_FLAGS = -g -G -lineinfo -O0 --std=c++17
+NVCC_FLAGS = -O0 --std=c++17
 
 all: final
 
