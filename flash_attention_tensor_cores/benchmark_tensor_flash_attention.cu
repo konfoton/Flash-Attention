@@ -46,11 +46,12 @@ int main() {
     size_t maxElems = (size_t)maxB * maxH * maxL * D;
     size_t bytes = maxElems * sizeof(__half);
 
-    __half *dQ, *dK, *dV, *dO;
+    __half *dQ, *dK, *dV;
+    float *dO;
     CHECK_CUDA(cudaMalloc(&dQ, bytes));
     CHECK_CUDA(cudaMalloc(&dK, bytes));
     CHECK_CUDA(cudaMalloc(&dV, bytes));
-    CHECK_CUDA(cudaMalloc(&dO, bytes));
+    CHECK_CUDA(cudaMalloc(&dO, maxElems * sizeof(float)));
 
     // Initialize once
     int threads = 256;
@@ -62,12 +63,27 @@ int main() {
 
     // Shared memory size (must match kernel layout)
     // Total halves = 3*D*tile + tile*tile + 4*16*2
-    size_t sharedHalves = 3 * D * tile + tile * tile + 4 * 16 * 2;
-    size_t sharedBytes = sharedHalves * sizeof(__half);
+    // int shared_mem_needed = D * tile * sizeof(__half); // queries
+    // shared_mem_needed += D * tile * sizeof(float); // output
+    // shared_mem_needed += D * tile * sizeof(__half); // keys + values idepdendently
+    // shared_mem_needed += tile * tile * sizeof(float); // tile
+    // shared_mem_needed += 64 * sizeof(float); // running max
+    // shared_mem_needed += 64 * sizeof(float); // running sum
+    // shared_mem_needed += 64 * sizeof(float); // local max
+    // shared_mem_needed += 16 * 16 * 4 * sizeof(float); 
+
+    int shared_mem_needed = D * tile * sizeof(__half); // queries
+    shared_mem_needed += D * tile * sizeof(float); // output
+    shared_mem_needed += D * tile * sizeof(__half); // keys + values idepdendently
+    shared_mem_needed += tile * tile * sizeof(float); // tile
+    shared_mem_needed += 64 * sizeof(float); // running max
+    shared_mem_needed += 64 * sizeof(float); // running sum
+    shared_mem_needed += 64 * sizeof(float); // local max
+    shared_mem_needed += 16 * 16 * 4 * sizeof(float); 
 
     printf("Benchmark Tensor Flash Attention Kernel\n");
     printf("D=%d tile=%d warmup=%d reps=%d shared_mem=%.2f KB\n",
-           D, tile, warmup, reps, sharedBytes / 1024.0);
+           D, tile, warmup, reps, shared_mem_needed / 1024.0);
 
     for (auto &bh : bh_sets) {
         int B = bh.first;
@@ -80,9 +96,17 @@ int main() {
 
             dim3 grid(L / tile, B, H);
             dim3 block(128); // 4 warps
+            
+            // Increase dynamic shared memory limit for this kernel
+            CHECK_CUDA(cudaFuncSetAttribute(
+                flash_attention_kernel,
+                cudaFuncAttributeMaxDynamicSharedMemorySize,
+                shared_mem_needed
+            ));
+
             // Warmup
             for (int i = 0; i < warmup; ++i) {
-                flash_attention_kernel<<<grid, block, sharedBytes>>>(
+                flash_attention_kernel<<<grid, block, shared_mem_needed>>>(
                     dQ, dK, dV, dO, B, H, L, D, tile
                 );
             }
@@ -95,7 +119,7 @@ int main() {
             float total_ms = 0.0f;
             for (int r = 0; r < reps; ++r) {
                 CHECK_CUDA(cudaEventRecord(start));
-                flash_attention_kernel<<<grid, block, sharedBytes>>>(
+                flash_attention_kernel<<<grid, block, shared_mem_needed>>>(
                     dQ, dK, dV, dO, B, H, L, D, tile
                 );
                 CHECK_CUDA(cudaEventRecord(stop));
