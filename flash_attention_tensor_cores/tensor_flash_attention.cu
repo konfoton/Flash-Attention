@@ -121,6 +121,7 @@ __global__ void flash_attention_kernel(
             nvcuda::wmma::fill_fragment(c_frag, 0.0f);
 
         }
+        __syncthreads();
         // loading V into shared memory
         copy_block_GSM<GM2SM_async<__half>, __half>(
             ( __half*)&V[V_offset + i * tile * D],
@@ -213,6 +214,7 @@ __global__ void flash_attention_kernel(
             nvcuda::wmma::store_matrix_sync((((float*)&shared_mem[O_offset_shmem]) + warp_id * 16 * D + j), c_frag, 128, nvcuda::wmma::mem_row_major);
         }
 
+        nvcuda::wmma::fill_fragment(c_frag, 0.0f);
         
     }
 
