@@ -18,7 +18,7 @@ static void attention_cpu(
 	auto idx = [H, L, D](int b, int h, int i, int d) -> size_t {
 		return (((size_t)b * H + h) * L + i) * D + d;
 	};
-	float scale = 1.0f / std::sqrt((float)D);
+	float scale = 1.0f; /// std::sqrt((float)D);
 
 	for (int b = 0; b < B; ++b) {
 		for (int h = 0; h < H; ++h) {
