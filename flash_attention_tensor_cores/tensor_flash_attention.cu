@@ -13,14 +13,7 @@ This kernel implements the Flash Attention mechanism for efficient self-attentio
 It utilizes shared memory and warp-level primitives to optimize memory access patterns and reduce
 the overall computation time.
 
-
 Author: Konrad Burdach
-
-Assumptions:
-- Input tensors Q, K, V, O are in half-precision (__half).
-- Softmax is computed in float32 (to do) for numerical stability.
-- 4 warps per block each processing 16x16 tiles
-- head_dim is 128
 
 */
 
@@ -29,7 +22,7 @@ __global__ void flash_attention_kernel(
 	const __half* __restrict__ Q,
 	const __half* __restrict__ K,
 	const __half* __restrict__ V,
-	float* __restrict__ O,
+	__half* __restrict__ O,
 	int B, 
     int H, 
     int L, 
@@ -226,15 +219,26 @@ __global__ void flash_attention_kernel(
             ((float*)&shared_mem[O_offset_shmem])[offset_thread] = ((float*)&shared_mem[O_offset_shmem])[offset_thread] * running_sum;
         }
     }
+    /*before writing results to GM i will cast the output to float16
+    I will use __float22half2_rn to convert two float values to __half2
+    (SASS support only double conversinon if single is used)
+    round to nearest even (statiscial bias is minimized)
+    */
 
 
     
     // write back output to global memory (store as float)
-    copy_block_GSM<SM2GM<float>, float>(
-        (float*)&O[O_offset],
+
+    copy_output_and_transform_(
+        (__half*)&O[O_offset],
         (float*)&shared_mem[O_offset_shmem],
         warp_id
     );
+    /*copy_block_GSM<SM2GM<float>, float>(
+        (float*)&O[O_offset],
+        (float*)&shared_mem[O_offset_shmem],
+        warp_id
+    );*/
     cp_async_commit();
     cp_async_wait<0>();
         

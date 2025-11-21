@@ -95,3 +95,17 @@ __forceinline__ __device__ constexpr void copy_block_GSM(
 
 }
 }
+
+__forceinline__ __device__ void copy_output_and_transform_(
+	__half *gmem,
+	float* smem,
+    const int warp_id
+){
+    half2* gmem_h2 = reinterpret_cast<half2*>(gmem);
+    float2* smem_f2 = reinterpret_cast<float2*>(smem);
+
+    for(int i = 0; i < 128 * 32; i += blockDim.x) {
+        int index = threadIdx.x + i;
+        gmem_h2[index] = __float22half2_rn(smem_f2[index]);
+    }
+}

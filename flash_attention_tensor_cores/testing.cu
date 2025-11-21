@@ -135,19 +135,18 @@ int main(){
     // test parameters
     const int B = 1;
     const int H = 1;
-    const int L = 8 * 64;
+    const int L =  64;
     const int D = 128;
 
 
 
     
     // allocate memory
-    __half *Q, *K, *V;
-    float *O;
+    __half *Q, *K, *V, *O;
     CUDA_CHECK(cudaMalloc(&Q, B * H * L * D* sizeof(__half)));
     CUDA_CHECK(cudaMalloc(&K, B * H * L * D* sizeof(__half)));
     CUDA_CHECK(cudaMalloc(&V, B * H * L * D* sizeof(__half)));
-    CUDA_CHECK(cudaMalloc(&O, B * H * L * D* sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&O, B * H * L * D* sizeof(__half)));
 
 
     // host memory for correctness testing (compute in float32)
@@ -185,7 +184,7 @@ int main(){
     const int number_of_warps = 4;
     const int tile = 16 * 4;
     int shared_mem_needed = D * tile * sizeof(__half); // queries
-    shared_mem_needed += D * tile * sizeof(float); // output
+    shared_mem_needed += D * tile * sizeof(float); // output (stored as float internally, converted to half on write)
     shared_mem_needed += D * tile * sizeof(__half); // keys + values idepdendently
     shared_mem_needed += tile * tile * sizeof(float); // tile
     shared_mem_needed += 64 * sizeof(float); // running max
@@ -237,9 +236,15 @@ int main(){
     CUDA_CHECK_LAST_KERNEL("flash_attention_kernel");
 
 
-    // copy back results (device stores float)
+    // copy back results (device stores __half)
+    std::vector<__half> O_gpu_half(B * H * L * D);
+    CUDA_CHECK(cudaMemcpy(O_gpu_half.data(), O, O_gpu_half.size() * sizeof(__half), cudaMemcpyDeviceToHost));
+    
+    // Convert to float for comparison
     std::vector<float> O_gpu(B * H * L * D);
-    CUDA_CHECK(cudaMemcpy(O_gpu.data(), O, O_gpu.size() * sizeof(float), cudaMemcpyDeviceToHost));
+    for(size_t i = 0; i < O_gpu_half.size(); ++i){
+        O_gpu[i] = __half2float(O_gpu_half[i]);
+    }
 
     // compute reference results on CPU (float)
     attention_cpu(
