@@ -1,111 +1,50 @@
-# Flash Attention (CUDA) vs Normal Attention
+## Flash Attention Implementations
 
-This project implements and benchmarks three GPU kernels for scaled dot-product attention:
-- Normal (naive) attention: straightforward
-- Flash-style attention: tiled, blockwise softmax that reduces memory traffic (CUDA CORES)
-- Flash-style attention: tiled, blockwise softmax that reduces memory traffic (TENSOR CORES)
+This project explores the progression from a straightforward attention kernel to optimized Flash Attention variants, culminating in a Tensor Core implementation. The focus is on understanding memory access patterns, numerical stability (streaming softmax), and how tiling plus hardware intrinsics transform an O(n²) memory footprint into an on‑chip streaming computation.
 
-Both GPU paths use half-precision (__half) inputs/outputs with float accumulation for stability. A PyTorch notebook is included to compare against PyTorch’s scaled_dot_product_attention backends.
+## Implementations
+1. CPU baseline – establishes correctness and acts as a performance reference.
+2. Naive GPU – simple CUDA translation; memory‑bandwidth bound and materializes the attention matrix.
+3. Flash Attention (CUDA cores) – tiles Q/K/V, performs online softmax, avoids full attention matrix, reduces global memory traffic.
+4. Flash Attention (Tensor Cores) – leverages mixed precision and warp‑level matrix multiply‑accumulate (MMA) operations for higher throughput.
 
-## Project structure
-- `flash_attention.cu` — Flash-style kernel + host wrapper (half in/out, float math internally)
-- `normal_attention.cu` — Naive kernel + host wrapper (half in/out, float math internally)
-- `attention_kernels.h` — Public host APIs to launch the kernels
-- `benchmark.cu` — C++ benchmark that sweeps (B, H, L) and times kernels
-- `pytorch_implemtation.ipynb` — PyTorch SDPA timing on the same shapes
-- `normal_attention_cpu.cpp` - cpu implementation for validity check
-- `Makefile` — Build rules
-- `flash_attention_tensor_cores` - currently in progress
+I reimplemented core ideas from Flash Attention 2 (paper: https://arxiv.org/pdf/2307.08691)
 
-## Build
-Set the proper compute capability in the Makefile (e.g., `sm_86` for Ampere). Then build the benchmark:
 
-```bash
-make -j bench
-```
 
-Clean and rebuild:
+## Benchmark Methodology (RTX 3090)
+Unless noted otherwise:
+* Precision: FP16 inputs with FP32 accumulation (Tensor Core path).
+* Head dimension D = 128.
+* Tile size = 64.
+* Warmup = 3 runs, measurement repetitions = 5.
 
-```bash
-make clean && make -j bench
-```
 
-## Run
 
-```bash
-./bench
-```
+## Comparison Table
+| B | H | L | D | PyTorch Time (ms) | PyTorch TFLOPs | Custom Time (ms) | Custom TFLOPs | Time Ratio (Custom / PyTorch) | TFLOPs Ratio (Custom / PyTorch) |
+|---|---|----|----|------------------|----------------|------------------|--------------|-------------------------------|---------------------------------|
+|32 |16 | 512  |128 | 1.677 | 40.98 | 7.307 | 9.41 | 4.36 | 0.23 |
 
-Optionally open the PyTorch notebook and run the cells:
-- `pytorch_implemtation.ipynb`
 
-## Results (milliseconds)
 
-Custom CUDA kernels in this repo (half inputs/outputs, float accumulation):
+|16 |16 |1024  |128 | 2.712 | 50.68 |14.039 | 9.79 | 5.18 | 0.19 |
+| 8 |16 |2048  |128 | 4.529 | 60.69 |25.194 |10.91 | 5.56 | 0.18 |
+| 4 |16 |4096  |128 | 8.527 | 64.47 |50.269 |10.94 | 5.90 | 0.17 |
+| 2 |16 |8192  |128 |16.840 | 65.31 |100.400|10.95 | 5.96 | 0.17 |
+| 1 |16 |16384 |128 |31.060 | 70.79 |200.591|10.96 | 6.46 | 0.15 |
 
-- B=2, H=4
-  - L=128 | normal=4.322 | flash=0.378
-  - L=256 | normal=16.758 | flash=0.844
-  - L=512 | normal=60.780 | flash=2.208
-  - L=1024 | normal=240.695 | flash=8.555
+Note:
+* PyTorch's implementation incorporates advanced scheduling, fusion, and kernel autotuning not yet replicated here.
 
-- B=4, H=8
-  - L=128 | normal=3.829 | flash=0.561
-  - L=256 | normal=15.250 | flash=2.136
-  - L=512 | normal=60.741 | flash=7.786
-  - L=1024 | normal=243.250 | flash=30.745
+## Interpreting Performance
+The widening gap at higher sequence lengths reflects superior memory utilization and kernel fusion strategies in the production implementation. Closing this gap would require:
+* using mma intruction for explicit registers layout and swizzing to avoid memory conflicts
 
-- B=8, H=8
-  - L=128 | normal=4.220 | flash=1.078
-  - L=256 | normal=16.846 | flash=3.903
-  - L=512 | normal=66.833 | flash=15.375
-  - L=1024 | normal=270.465 | flash=61.245
 
-- B=8, H=16
-  - L=128 | normal=8.013 | flash=1.973
-  - L=256 | normal=31.507 | flash=7.754
-  - L=512 | normal=125.664 | flash=30.636
-  - L=1024 | normal=501.437 | flash=121.674
-
-- B=16, H=16
-  - L=128 | normal=15.020 | flash=3.885
-  - L=256 | normal=59.481 | flash=15.320
-  - L=512 | normal=236.309 | flash=60.858
-  - L=1024 | normal=945.198 | flash=244.133
-
-PyTorch SDPA (FlashAttention backend) vs math backend on the same shapes (GPU, half precision):
-
-- B=2, H=4
-  - L=128 | flash=0.0278 | math=0.1608
-  - L=256 | flash=0.0268 | math=0.1603
-  - L=512 | flash=0.0326 | math=0.2091
-  - L=1024 | flash=0.0551 | math=0.5546
-
-- B=4, H=8
-  - L=128 | flash=0.0268 | math=0.1591
-  - L=256 | flash=0.0262 | math=0.1954
-  - L=512 | flash=0.0563 | math=0.5800
-  - L=1024 | flash=0.1835 | math=1.9929
-
-- B=8, H=8
-  - L=128 | flash=0.0268 | math=0.1593
-  - L=256 | flash=0.0358 | math=0.3484
-  - L=512 | flash=0.1001 | math=1.0936
-  - L=1024 | flash=0.3090 | math=3.7894
-
-- B=8, H=16
-  - L=128 | flash=0.0272 | math=0.2253
-  - L=256 | flash=0.0590 | math=0.6461
-  - L=512 | flash=0.1652 | math=2.0554
-  - L=1024 | flash=0.5612 | math=7.4070
-
-- B=16, H=16
-  - L=128 | flash=0.0438 | math=0.4302
-  - L=256 | flash=0.0997 | math=1.2122
-  - L=512 | flash=0.2988 | math=3.9868
-  - L=1024 | flash=1.0852 | math=14.7282
-
-## In progress
-
-I am adding implementation with Tensor Cores
-
+## Future Work
+* Replace WMMA with low-level MMA fragment layout control to shrink shared memory staging.
+* Add causal & padding mask support.
+* Profile with Nsight Compute to quantify memory vs compute bottlenecks.
+* using PyCUDA add python API
+* Extend benchmarks: variable head dimension, multi‑GPU, different batch sizes.
