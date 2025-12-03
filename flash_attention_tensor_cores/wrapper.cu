@@ -1,5 +1,7 @@
 #include "wrapper.cuh"
 #include <cuda_runtime.h>
+#include <string>
+#include <stdexcept>
 // (Float host wrapper removed per user request; inputs are provided as half already.)
 
 // Host-facing convenience: takes half host inputs and copies to device, returns half output
@@ -83,22 +85,26 @@ void run_tensor_flash_attention(
     // Supported B values: 32,16,8,4,2,1
     switch (B) {
         case 32:
-            flash_attention_kernel<32, 16, 512, 128, 64, 4*128*64 + 2*64*64 + 256><<<grid, block, shared_mem_needed, stream>>>(dQ, dK, dV, dO);
+            cudaFuncSetAttribute(
+            (const void*)flash_attention_kernel<32, 16, 512, 128, 64>,
+            cudaFuncAttributeMaxDynamicSharedMemorySize,
+            shared_mem_needed);
+            flash_attention_kernel<32, 16, 512, 128, 64><<<grid, block, shared_mem_needed, stream>>>(dQ, dK, dV, dO);
             break;
         case 16:
-            flash_attention_kernel<16, 16, 1024, 128, 64, 4*128*64 + 2*64*64 + 256><<<grid, block, shared_mem_needed, stream>>>(dQ, dK, dV, dO);
+            flash_attention_kernel<16, 16, 1024, 128, 64><<<grid, block, shared_mem_needed, stream>>>(dQ, dK, dV, dO);
             break;
         case 8:
-            flash_attention_kernel<8, 16, 2048, 128, 64, 4*128*64 + 2*64*64 + 256><<<grid, block, shared_mem_needed, stream>>>(dQ, dK, dV, dO);
+            flash_attention_kernel<8, 16, 2048, 128, 64><<<grid, block, shared_mem_needed, stream>>>(dQ, dK, dV, dO);
             break;
         case 4:
-            flash_attention_kernel<4, 16, 4096, 128, 64, 4*128*64 + 2*64*64 + 256><<<grid, block, shared_mem_needed, stream>>>(dQ, dK, dV, dO);
+            flash_attention_kernel<4, 16, 4096, 128, 64><<<grid, block, shared_mem_needed, stream>>>(dQ, dK, dV, dO);
             break;
         case 2:
-            flash_attention_kernel<2, 16, 8192, 128, 64, 4*128*64 + 2*64*64 + 256><<<grid, block, shared_mem_needed, stream>>>(dQ, dK, dV, dO);
+            flash_attention_kernel<2, 16, 8192, 128, 64><<<grid, block, shared_mem_needed, stream>>>(dQ, dK, dV, dO);
             break;
         case 1:
-            flash_attention_kernel<1, 16, 16384, 128, 64, 4*128*64 + 2*64*64 + 256><<<grid, block, shared_mem_needed, stream>>>(dQ, dK, dV, dO);
+            flash_attention_kernel<1, 16, 16384, 128, 64><<<grid, block, shared_mem_needed, stream>>>(dQ, dK, dV, dO);
             break;
         default:
             throw std::runtime_error("run_tensor_flash_attention: unsupported batch size (B). Use one of {32,16,8,4,2,1}.");

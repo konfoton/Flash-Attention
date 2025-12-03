@@ -1,4 +1,5 @@
 #include "tensor_flash_attention.cuh"
+#include <cuda_fp16.h>
 
 #ifndef WRAPPER_CUH
 #define WRAPPER_CUH

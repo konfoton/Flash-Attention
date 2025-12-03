@@ -1,6 +1,5 @@
 #include "cuda_utils.cuh"
 #include <cuda.h>
-#include <cuda_fp16.h>
 #include <mma.h>
 #include "tensor_flash_attention.cuh"
 
