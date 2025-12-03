@@ -80,11 +80,9 @@ int main() {
     shared_mem_needed += 64 * sizeof(float); // running sum
 
 
-    CHECK_CUDA(cudaFuncSetAttribute(
-        flash_attention_kernel,
-        cudaFuncAttributeMaxDynamicSharedMemorySize,
-        shared_mem_needed
-    ));
+    // Set dynamic shared memory limit on the specific kernel instantiation we will launch
+    // Note: cudaFuncSetAttribute requires a concrete function symbol, not a template name.
+    // We'll set it inside the loop per (B,L) configuration before launching.
     printf("Benchmark Tensor Flash Attention Kernel\n");
     printf("D=%d tile=%d warmup=%d reps=%d shared_mem=%.2f KB\n",
            D, tile, warmup, reps, shared_mem_needed / 1024.0);
@@ -103,13 +101,76 @@ int main() {
         }
 
         dim3 grid(L / tile, B, H);
-            dim3 block(128); // 4 warps
-            // Warmup
-            for (int i = 0; i < warmup; ++i) {
-                flash_attention_kernel<<<grid, block, shared_mem_needed>>>(
-                    dQ, dK, dV, dO, B, H, L, D, tile
-                );
+        dim3 block(128); // 4 warps
+        // Set kernel max dynamic shared memory for the specific instantiation
+        switch (B) {
+            case 32:
+                CHECK_CUDA(cudaFuncSetAttribute(
+                    (const void*)flash_attention_kernel<32, 16, 512, 128, 64>,
+                    cudaFuncAttributeMaxDynamicSharedMemorySize,
+                    shared_mem_needed));
+                break;
+            case 16:
+                CHECK_CUDA(cudaFuncSetAttribute(
+                    (const void*)flash_attention_kernel<16, 16, 1024, 128, 64>,
+                    cudaFuncAttributeMaxDynamicSharedMemorySize,
+                    shared_mem_needed));
+                break;
+            case 8:
+                CHECK_CUDA(cudaFuncSetAttribute(
+                    (const void*)flash_attention_kernel<8, 16, 2048, 128, 64>,
+                    cudaFuncAttributeMaxDynamicSharedMemorySize,
+                    shared_mem_needed));
+                break;
+            case 4:
+                CHECK_CUDA(cudaFuncSetAttribute(
+                    (const void*)flash_attention_kernel<4, 16, 4096, 128, 64>,
+                    cudaFuncAttributeMaxDynamicSharedMemorySize,
+                    shared_mem_needed));
+                break;
+            case 2:
+                CHECK_CUDA(cudaFuncSetAttribute(
+                    (const void*)flash_attention_kernel<2, 16, 8192, 128, 64>,
+                    cudaFuncAttributeMaxDynamicSharedMemorySize,
+                    shared_mem_needed));
+                break;
+            case 1:
+                CHECK_CUDA(cudaFuncSetAttribute(
+                    (const void*)flash_attention_kernel<1, 16, 16384, 128, 64>,
+                    cudaFuncAttributeMaxDynamicSharedMemorySize,
+                    shared_mem_needed));
+                break;
+            default:
+                printf("Unsupported B=%d for cudaFuncSetAttribute; skipping.\n", B);
+                break;
+        }
+
+        // Warmup using explicit instantiations
+        for (int i = 0; i < warmup; ++i) {
+            switch (B) {
+                case 32:
+                    flash_attention_kernel<32, 16, 512, 128, 64><<<grid, block, shared_mem_needed>>>(dQ, dK, dV, dO);
+                    break;
+                case 16:
+                    flash_attention_kernel<16, 16, 1024, 128, 64><<<grid, block, shared_mem_needed>>>(dQ, dK, dV, dO);
+                    break;
+                case 8:
+                    flash_attention_kernel<8, 16, 2048, 128, 64><<<grid, block, shared_mem_needed>>>(dQ, dK, dV, dO);
+                    break;
+                case 4:
+                    flash_attention_kernel<4, 16, 4096, 128, 64><<<grid, block, shared_mem_needed>>>(dQ, dK, dV, dO);
+                    break;
+                case 2:
+                    flash_attention_kernel<2, 16, 8192, 128, 64><<<grid, block, shared_mem_needed>>>(dQ, dK, dV, dO);
+                    break;
+                case 1:
+                    flash_attention_kernel<1, 16, 16384, 128, 64><<<grid, block, shared_mem_needed>>>(dQ, dK, dV, dO);
+                    break;
+                default:
+                    printf("Unsupported B=%d in warmup; skipping.\n", B);
+                    break;
             }
+        }
             CHECK_CUDA(cudaDeviceSynchronize());
 
             cudaEvent_t start, stop;
@@ -119,9 +180,29 @@ int main() {
             float total_ms = 0.0f;
             for (int r = 0; r < reps; ++r) {
                 CHECK_CUDA(cudaEventRecord(start));
-                flash_attention_kernel<<<grid, block, shared_mem_needed>>>(
-                    dQ, dK, dV, dO, B, H, L, D, tile
-                );
+                switch (B) {
+                    case 32:
+                        flash_attention_kernel<32, 16, 512, 128, 64><<<grid, block, shared_mem_needed>>>(dQ, dK, dV, dO);
+                        break;
+                    case 16:
+                        flash_attention_kernel<16, 16, 1024, 128, 64><<<grid, block, shared_mem_needed>>>(dQ, dK, dV, dO);
+                        break;
+                    case 8:
+                        flash_attention_kernel<8, 16, 2048, 128, 64><<<grid, block, shared_mem_needed>>>(dQ, dK, dV, dO);
+                        break;
+                    case 4:
+                        flash_attention_kernel<4, 16, 4096, 128, 64><<<grid, block, shared_mem_needed>>>(dQ, dK, dV, dO);
+                        break;
+                    case 2:
+                        flash_attention_kernel<2, 16, 8192, 128, 64><<<grid, block, shared_mem_needed>>>(dQ, dK, dV, dO);
+                        break;
+                    case 1:
+                        flash_attention_kernel<1, 16, 16384, 128, 64><<<grid, block, shared_mem_needed>>>(dQ, dK, dV, dO);
+                        break;
+                    default:
+                        printf("Unsupported B=%d in reps; skipping.\n", B);
+                        break;
+                }
                 CHECK_CUDA(cudaEventRecord(stop));
                 CHECK_CUDA(cudaEventSynchronize(stop));
                 float ms;

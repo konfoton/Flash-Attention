@@ -17,14 +17,15 @@ Author: Konrad Burdach
 
 */
 
-template <int B, int H, int L, int D, int tile, int shared_mem_size>
+template <int B, int H, int L, int D, int tile>
 __global__ void flash_attention_kernel(
 	const __half* __restrict__ Q,
 	const __half* __restrict__ K,
 	const __half* __restrict__ V,
 	__half* __restrict__ O
 ){
-    __shared__ __half shared_mem[shared_mem_size];
+    // Use dynamic shared memory to avoid static per-block shared memory limits at compile time.
+    extern __shared__ __half shared_mem[];
 
 
     int batch_id = blockIdx.y;
@@ -237,18 +238,9 @@ __global__ void flash_attention_kernel(
 }
  
 
-
-/*
-int shared_mem_needed = D * tile * sizeof(__half); // queries
-    shared_mem_needed += D * tile * sizeof(float); // output (stored as float internally, converted to half on write)
-    shared_mem_needed += D * tile * sizeof(__half); // keys + values idepdendently
-    shared_mem_needed += tile * tile * sizeof(float); // tile
-    shared_mem_needed += 64 * sizeof(float); // running max
-    shared_mem_needed += 64 * sizeof(float); // running sum
-*/
-template __global__ void flash_attention_kernel<32, 16, 512, 128, 64, 4*128*64 + 2*64*64 + 256>(const __half*, const __half*, const __half*, __half*);
-template __global__ void flash_attention_kernel<16, 16, 1024, 128, 64, 4*128*64 + 2*64*64 + 256>(const __half*, const __half*, const __half*, __half*);
-template __global__ void flash_attention_kernel<8, 16, 2048, 128, 64, 4*128*64 + 2*64*64 + 256>(const __half*, const __half*, const __half*, __half*);
-template __global__ void flash_attention_kernel<4, 16, 4096, 128, 64, 4*128*64 + 2*64*64 + 256>(const __half*, const __half*, const __half*, __half*);
-template __global__ void flash_attention_kernel<2, 16, 8192, 128, 64, 4*128*64 + 2*64*64 + 256>(const __half*, const __half*, const __half*, __half*);
-template __global__ void flash_attention_kernel<1, 16, 16384, 128, 64, 4*128*64 + 2*64*64 + 256>(const __half*, const __half*, const __half*, __half*);
+template __global__ void flash_attention_kernel<32, 16, 512, 128, 64>(const __half*, const __half*, const __half*, __half*);
+template __global__ void flash_attention_kernel<16, 16, 1024, 128, 64>(const __half*, const __half*, const __half*, __half*);
+template __global__ void flash_attention_kernel<8, 16, 2048, 128, 64>(const __half*, const __half*, const __half*, __half*);
+template __global__ void flash_attention_kernel<4, 16, 4096, 128, 64>(const __half*, const __half*, const __half*, __half*);
+template __global__ void flash_attention_kernel<2, 16, 8192, 128, 64>(const __half*, const __half*, const __half*, __half*);
+template __global__ void flash_attention_kernel<1, 16, 16384, 128, 64>(const __half*, const __half*, const __half*, __half*);
