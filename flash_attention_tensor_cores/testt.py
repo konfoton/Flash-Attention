@@ -24,7 +24,7 @@ lib.run_tensor_flash_attention_host_half.argtypes = [
 lib.run_tensor_flash_attention_host_half.restype = None
 
 # Prepare inputs
-B, H, L, D, tile = 1, 16, 64, 128, 64
+B, H, L, D, tile = 32, 16, 512, 128, 64
 size = B * H * L * D
 
 # Create numpy float16 buffers

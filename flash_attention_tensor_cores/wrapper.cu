@@ -2,6 +2,7 @@
 #include <cuda_runtime.h>
 #include <string>
 #include <stdexcept>
+#include <cuda.h>
 // (Float host wrapper removed per user request; inputs are provided as half already.)
 
 // Host-facing convenience: takes half host inputs and copies to device, returns half output
@@ -67,6 +68,8 @@ void run_tensor_flash_attention(
     shared_mem_needed += 64 * sizeof(float);           // running max
     shared_mem_needed += 64 * sizeof(float);           // running sum
 
+    // Query device limit for max dynamic shared memory and clamp if needed
+
     // Configure launch parameters
     const int warps = 4; // matches kernel usage
     dim3 block(warps * 32);
@@ -85,25 +88,75 @@ void run_tensor_flash_attention(
     // Supported B values: 32,16,8,4,2,1
     switch (B) {
         case 32:
-            cudaFuncSetAttribute(
-            (const void*)flash_attention_kernel<32, 16, 512, 128, 64>,
-            cudaFuncAttributeMaxDynamicSharedMemorySize,
-            shared_mem_needed);
+            {
+                cudaError_t attrErr = cudaFuncSetAttribute(
+                    (const void*)flash_attention_kernel<32, 16, 512, 128, 64>,
+                    cudaFuncAttributeMaxDynamicSharedMemorySize,
+                    shared_mem_needed);
+                if (attrErr != cudaSuccess) {
+                    throw std::runtime_error(std::string("cudaFuncSetAttribute failed (B=32): ") + cudaGetErrorString(attrErr));
+                }
+            }
             flash_attention_kernel<32, 16, 512, 128, 64><<<grid, block, shared_mem_needed, stream>>>(dQ, dK, dV, dO);
             break;
         case 16:
+            {
+                cudaError_t attrErr = cudaFuncSetAttribute(
+                    (const void*)flash_attention_kernel<16, 16, 1024, 128, 64>,
+                    cudaFuncAttributeMaxDynamicSharedMemorySize,
+                    shared_mem_needed);
+                if (attrErr != cudaSuccess) {
+                    throw std::runtime_error(std::string("cudaFuncSetAttribute failed (B=16): ") + cudaGetErrorString(attrErr));
+                }
+            }
             flash_attention_kernel<16, 16, 1024, 128, 64><<<grid, block, shared_mem_needed, stream>>>(dQ, dK, dV, dO);
             break;
         case 8:
+            {
+                cudaError_t attrErr = cudaFuncSetAttribute(
+                    (const void*)flash_attention_kernel<8, 16, 2048, 128, 64>,
+                    cudaFuncAttributeMaxDynamicSharedMemorySize,
+                    shared_mem_needed);
+                if (attrErr != cudaSuccess) {
+                    throw std::runtime_error(std::string("cudaFuncSetAttribute failed (B=8): ") + cudaGetErrorString(attrErr));
+                }
+            }
             flash_attention_kernel<8, 16, 2048, 128, 64><<<grid, block, shared_mem_needed, stream>>>(dQ, dK, dV, dO);
             break;
         case 4:
+            {
+                cudaError_t attrErr = cudaFuncSetAttribute(
+                    (const void*)flash_attention_kernel<4, 16, 4096, 128, 64>,
+                    cudaFuncAttributeMaxDynamicSharedMemorySize,
+                    shared_mem_needed);
+                if (attrErr != cudaSuccess) {
+                    throw std::runtime_error(std::string("cudaFuncSetAttribute failed (B=4): ") + cudaGetErrorString(attrErr));
+                }
+            }
             flash_attention_kernel<4, 16, 4096, 128, 64><<<grid, block, shared_mem_needed, stream>>>(dQ, dK, dV, dO);
             break;
         case 2:
+            {
+                cudaError_t attrErr = cudaFuncSetAttribute(
+                    (const void*)flash_attention_kernel<2, 16, 8192, 128, 64>,
+                    cudaFuncAttributeMaxDynamicSharedMemorySize,
+                    shared_mem_needed);
+                if (attrErr != cudaSuccess) {
+                    throw std::runtime_error(std::string("cudaFuncSetAttribute failed (B=2): ") + cudaGetErrorString(attrErr));
+                }
+            }
             flash_attention_kernel<2, 16, 8192, 128, 64><<<grid, block, shared_mem_needed, stream>>>(dQ, dK, dV, dO);
             break;
         case 1:
+            {
+                cudaError_t attrErr = cudaFuncSetAttribute(
+                    (const void*)flash_attention_kernel<1, 16, 16384, 128, 64>,
+                    cudaFuncAttributeMaxDynamicSharedMemorySize,
+                    shared_mem_needed);
+                if (attrErr != cudaSuccess) {
+                    throw std::runtime_error(std::string("cudaFuncSetAttribute failed (B=1): ") + cudaGetErrorString(attrErr));
+                }
+            }
             flash_attention_kernel<1, 16, 16384, 128, 64><<<grid, block, shared_mem_needed, stream>>>(dQ, dK, dV, dO);
             break;
         default:
