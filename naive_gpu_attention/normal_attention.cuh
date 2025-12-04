@@ -2,7 +2,7 @@
 #include <cuda_runtime.h>
 #include <cuda_fp16.h>
 
-void run_normal_attention(
+extern "C" void run_normal_attention(
     const __half* dQ,
     const __half* dK,
     const __half* dV,

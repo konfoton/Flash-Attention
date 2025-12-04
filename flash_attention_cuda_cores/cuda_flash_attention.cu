@@ -142,4 +142,51 @@ __global__ void flash_attention_kernel(
 
 	}
 	
+// Host wrapper implementation
+extern "C" void run_flash_attention(
+	const __half* dQ,
+	const __half* dK,
+	const __half* dV,
+	__half* dO,
+	int B,
+	int H,
+	int L,
+	int D,
+	int KQVO_block_y,
+	int number_of_warps_per_block,
+	cudaStream_t stream,
+	float* elapsed_ms
+) {
+	assert(D % 32 == 0);
+	assert(L % KQVO_block_y == 0);
+
+	dim3 grid(B, H, L / KQVO_block_y);
+	dim3 block(number_of_warps_per_block * 32);
+
+	int size_of_shared_memory = 0;
+	size_of_shared_memory += KQVO_block_y * D * 4 * sizeof(float); // K V Q O in float
+	size_of_shared_memory += KQVO_block_y * 2 * sizeof(float);     // running softmax and max
+	size_of_shared_memory += KQVO_block_y * KQVO_block_y * sizeof(float);
+
+	cudaEvent_t start_ev = nullptr, stop_ev = nullptr;
+	if (elapsed_ms) {
+		CUDA_CHECK(cudaEventCreate(&start_ev));
+		CUDA_CHECK(cudaEventCreate(&stop_ev));
+		CUDA_CHECK(cudaEventRecord(start_ev, stream));
+	}
+
+	flash_attention_kernel<<<grid, block, size_of_shared_memory, stream>>>(
+		dQ, dK, dV, dO, B, H, L, D, KQVO_block_y, number_of_warps_per_block);
+	CUDA_CHECK(cudaGetLastError());
+
+	if (elapsed_ms) {
+		CUDA_CHECK(cudaEventRecord(stop_ev, stream));
+		CUDA_CHECK(cudaEventSynchronize(stop_ev));
+		CUDA_CHECK(cudaEventElapsedTime(elapsed_ms, start_ev, stop_ev));
+		CUDA_CHECK(cudaEventDestroy(start_ev));
+		CUDA_CHECK(cudaEventDestroy(stop_ev));
+	}
+}
+
+
 
