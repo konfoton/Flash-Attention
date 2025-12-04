@@ -243,3 +243,4 @@ template __global__ void flash_attention_kernel<8, 16, 2048, 128, 64>(const __ha
 template __global__ void flash_attention_kernel<4, 16, 4096, 128, 64>(const __half*, const __half*, const __half*, __half*);
 template __global__ void flash_attention_kernel<2, 16, 8192, 128, 64>(const __half*, const __half*, const __half*, __half*);
 template __global__ void flash_attention_kernel<1, 16, 16384, 128, 64>(const __half*, const __half*, const __half*, __half*);
+template __global__ void flash_attention_kernel<1, 1, 64, 128, 64>(const __half*, const __half*, const __half*, __half*);

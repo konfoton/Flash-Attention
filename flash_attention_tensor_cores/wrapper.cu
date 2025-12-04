@@ -148,17 +148,38 @@ void run_tensor_flash_attention(
             flash_attention_kernel<2, 16, 8192, 128, 64><<<grid, block, shared_mem_needed, stream>>>(dQ, dK, dV, dO);
             break;
         case 1:
-            {
-                cudaError_t attrErr = cudaFuncSetAttribute(
-                    (const void*)flash_attention_kernel<1, 16, 16384, 128, 64>,
-                    cudaFuncAttributeMaxDynamicSharedMemorySize,
-                    shared_mem_needed);
-                if (attrErr != cudaSuccess) {
-                    throw std::runtime_error(std::string("cudaFuncSetAttribute failed (B=1): ") + cudaGetErrorString(attrErr));
+            switch (L) {
+                case 16384:
+                    {
+                        cudaError_t attrErr = cudaFuncSetAttribute(
+                            (const void*)flash_attention_kernel<1, 16, 16384, 128, 64>,
+                            cudaFuncAttributeMaxDynamicSharedMemorySize,
+                            shared_mem_needed);
+                        if (attrErr != cudaSuccess) {
+                            throw std::runtime_error(std::string("cudaFuncSetAttribute failed (B=1): ") + cudaGetErrorString(attrErr));
+
+                        }
+                    }
+                    flash_attention_kernel<1, 16, 16384, 128, 64><<<grid, block, shared_mem_needed, stream>>>(dQ, dK, dV, dO);
+                    break;
+                case 64:
+                    {
+                        cudaError_t attrErr = cudaFuncSetAttribute(
+                            (const void*)flash_attention_kernel<1, 1, 64, 128, 64>,
+                            cudaFuncAttributeMaxDynamicSharedMemorySize,
+                            shared_mem_needed);
+                        if (attrErr != cudaSuccess) {
+                            throw std::runtime_error(std::string("cudaFuncSetAttribute failed (B=1): ") + cudaGetErrorString(attrErr));
+                        }
+                    }
+                    flash_attention_kernel<1, 1, 64, 128, 64><<<grid, block, shared_mem_needed, stream>>>(dQ, dK, dV, dO);
+                    break;
+                default:
+                    throw std::runtime_error("run_tensor_flash_attention: unsupported sequence length (L) for B=1. Use L=16384 or L=64.");
                 }
-            }
-            flash_attention_kernel<1, 16, 16384, 128, 64><<<grid, block, shared_mem_needed, stream>>>(dQ, dK, dV, dO);
             break;
+
+        
         default:
             throw std::runtime_error("run_tensor_flash_attention: unsupported batch size (B). Use one of {32,16,8,4,2,1}.");
     }
