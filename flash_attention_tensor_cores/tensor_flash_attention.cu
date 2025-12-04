@@ -46,7 +46,6 @@ __global__ void flash_attention_kernel(
 
 
 
-    int B_r = tile;
     int T_r = L / 64;
 
     wmma::fragment<wmma::matrix_a, 16, 16, 16, __half, wmma::row_major> a_frag;
