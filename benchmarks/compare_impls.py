@@ -74,10 +74,7 @@ def metrics(ref32: np.ndarray, test16: np.ndarray):
     mae = float(np.mean(ad))
     nz = np.abs(a) > 0
     mre = float(np.mean(np.abs(diff[nz]) / np.abs(a[nz]))) if np.any(nz) else float('nan')
-    l1 = float(np.sum(ad))
-    l2 = float(np.linalg.norm(diff))
-    linf = float(np.max(ad))
-    return mae, mre, l1, l2, linf
+    return mae, mre
 
 
 def main():
@@ -89,9 +86,10 @@ def main():
 
     size = B * H * L * D
     rng = np.random.default_rng(0)
-    Q = rng.standard_normal(size, dtype=np.float16)
-    K = rng.standard_normal(size, dtype=np.float16)
-    V = rng.standard_normal(size, dtype=np.float16)
+    # Generate in float32 and cast to float16 (standard_normal doesn't support float16 directly)
+    Q = rng.standard_normal(size, dtype=np.float32).astype(np.float16)
+    K = rng.standard_normal(size, dtype=np.float32).astype(np.float16)
+    V = rng.standard_normal(size, dtype=np.float32).astype(np.float16)
 
     O_tc = np.zeros_like(Q)
     O_cc = np.zeros_like(Q)
@@ -139,8 +137,8 @@ def main():
         ref = O_ref
 
     def print_metrics(name, out):
-        mae, mre, l1, l2, linf = metrics(ref.astype(np.float32), out)
-        print(f"{name}: MAE={mae:.6f} MRE={mre:.6e} L1={l1:.3f} L2={l2:.3f} L_inf={linf:.6f}")
+        mae, mre = metrics(ref.astype(np.float32), out)
+        print(f"{name}: MAE={mae:.6f} MRE={mre:.6e}")
 
     print("\nPrecision metrics vs", ('Torch ref' if O_ref is not None else 'Tensor Cores'))
     print_metrics('Tensor Cores', O_tc)
