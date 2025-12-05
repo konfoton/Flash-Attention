@@ -4,7 +4,6 @@ import numpy as np
 import os
 import time
 
-# Optional torch reference
 try:
     import torch
     HAS_TORCH = True
@@ -13,10 +12,8 @@ except Exception:
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# Load libraries (build first using shared_compile.sh in each folder)
 lib_tensor = ct.CDLL(os.path.join(ROOT, 'flash_attention_tensor_cores', 'libflash_attention.so'))
 
-# Try to load CUDA-cores and naive libs; skip if missing
 lib_cuda_cores = None
 lib_naive = None
 cuda_path = os.path.join(ROOT, 'flash_attention_cuda_cores', 'libflash_attention_cuda_cores.so')
@@ -78,7 +75,6 @@ def metrics(ref32: np.ndarray, test16: np.ndarray):
 
 
 def main():
-    # Shapes chosen to satisfy all kernels (tensor-cores tile=64, D%32==0, L%KQVO==0)
     B, H, L, D = 32, 16, 512, 128
     tile = 64
     KQVO_block_y = 8
@@ -86,7 +82,6 @@ def main():
 
     size = B * H * L * D
     rng = np.random.default_rng(0)
-    # Generate in float32 and cast to float16 (standard_normal doesn't support float16 directly)
     Q = rng.standard_normal(size, dtype=np.float32).astype(np.float16)
     K = rng.standard_normal(size, dtype=np.float32).astype(np.float16)
     V = rng.standard_normal(size, dtype=np.float32).astype(np.float16)
@@ -95,7 +90,6 @@ def main():
     O_cc = np.zeros_like(Q)
     O_nv = np.zeros_like(Q)
 
-    # Optional Torch ref
     O_ref = None
     if HAS_TORCH and torch.cuda.is_available():
         device = torch.device('cuda')
@@ -110,27 +104,23 @@ def main():
     else:
         print('[warn] Torch CUDA not available; metrics will be relative to tensor-cores output.')
 
-    # Tensor Cores run
     elapsed_tc = ct.c_float(0.0)
     lib_tensor.run_tensor_flash_attention_host_half(
         as_half_ptr(Q), as_half_ptr(K), as_half_ptr(V), as_half_ptr(O_tc),
         B, H, L, D, tile, None, ct.byref(elapsed_tc))
 
-    # CUDA Cores run
     elapsed_cc = ct.c_float(0.0)
     if lib_cuda_cores is not None:
         lib_cuda_cores.run_cuda_cores_flash_attention_host_half(
             as_half_ptr(Q), as_half_ptr(K), as_half_ptr(V), as_half_ptr(O_cc),
             B, H, L, D, KQVO_block_y, warps, None, ct.byref(elapsed_cc))
 
-    # Naive run
     elapsed_nv = ct.c_float(0.0)
     if lib_naive is not None:
         lib_naive.run_naive_attention_host_half(
             as_half_ptr(Q), as_half_ptr(K), as_half_ptr(V), as_half_ptr(O_nv),
             B, H, L, D, 0, None, ct.byref(elapsed_nv))
 
-    # Metrics
     if O_ref is None:
         ref = O_tc
     else:
@@ -147,7 +137,6 @@ def main():
     if lib_naive is not None:
         print_metrics('Naive', O_nv)
 
-    # Speed (ms) - note: these are kernel times from within wrappers
     print("\nSpeed (ms)")
     print(f"Tensor Cores: {elapsed_tc.value:.3f} ms")
     if lib_cuda_cores is not None:
