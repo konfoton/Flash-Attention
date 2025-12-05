@@ -175,7 +175,7 @@ __global__ void flash_attention_kernel(
 
         // compute output
         for (int j = 0; j < 128; j += 16) {
-            load_matrix_sync(c_frag, (((float*)&shared_mem[O_offset_shmem]) + warp_id * 16 * D + j), 128, nvcuda::wmma::mem_row_major);
+            load_matrix_sync(c_frag, (reinterpret_cast<float*>(&shared_mem[O_offset_shmem]) + warp_id * 16 * D + j), 128, nvcuda::wmma::mem_row_major);
             for(int k = 0; k < 64; k += 16) {
 
                 int col_a = k;
@@ -196,7 +196,7 @@ __global__ void flash_attention_kernel(
     }
 
     for(int j = 0; j < 16; j++){
-        float running_sum = ((float*)&shared_mem[running_max_offset_shmem] + warp_id * 16 * 2 + j * 2 + 1)[0];
+        float running_sum = reinterpret_cast<float*>(&shared_mem[running_max_offset_shmem])[warp_id * 16 * 2 + j * 2 + 1];
         running_sum = 1.0f / running_sum;
         for(int k = 0; k < 128; k += 32){
             int offset_thread = warp_id * 16 * 128 + j * 128 + lane_id + k;
