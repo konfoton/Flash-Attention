@@ -1,6 +1,5 @@
 #pragma once
 #include <cuda_fp16.h>
-// Declaration of the templated CUDA kernel. Definitions live in the .cu file.
 template <int B, int H, int L, int D, int tile>
 __global__ void flash_attention_kernel(
 	const __half* __restrict__ Q,
@@ -9,12 +8,10 @@ __global__ void flash_attention_kernel(
 	__half* __restrict__ O
 );
 
-// Do NOT add "extern template __global__" declarations here; __global__ cannot be extern-instantiated in headers.
 extern template __global__ void flash_attention_kernel<32, 16, 512, 128, 64>(const __half*, const __half*, const __half*, __half*);
 extern template __global__ void flash_attention_kernel<16, 16, 1024, 128, 64>(const __half*, const __half*, const __half*, __half*);
 extern template __global__ void flash_attention_kernel<8, 16, 2048, 128, 64>(const __half*, const __half*, const __half*, __half*);
 extern template __global__ void flash_attention_kernel<4, 16, 4096, 128, 64>(const __half*, const __half*, const __half*, __half*);
 extern template __global__ void flash_attention_kernel<2, 16, 8192, 128, 64>(const __half*, const __half*, const __half*, __half*);
 extern template __global__ void flash_attention_kernel<1, 16, 16384, 128, 64>(const __half*, const __half*, const __half*, __half*);
-// Support minimal test configuration used by testing.cu (B=1,H=1,L=64,D=128,tile=64)
 extern template __global__ void flash_attention_kernel<1, 1, 64, 128, 64>(const __half*, const __half*, const __half*, __half*);
